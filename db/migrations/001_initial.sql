@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS lights_users (
+  id uuid PRIMARY KEY,
+  app_id text NOT NULL,
+  open_code text NOT NULL,
+  nickname text NOT NULL,
+  completed_rounds integer NOT NULL DEFAULT 0,
+  total_moves integer NOT NULL DEFAULT 0,
+  UNIQUE(app_id, open_code)
+);
+CREATE TABLE IF NOT EXISTS lights_sessions (
+  hash text PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES lights_users(id),
+  expires_at bigint NOT NULL,
+  instance_id text
+);
+CREATE INDEX IF NOT EXISTS lights_sessions_expiry ON lights_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS lights_rounds (
+  round_id uuid PRIMARY KEY,
+  room_id text NOT NULL,
+  finished_at bigint NOT NULL,
+  moves integer NOT NULL,
+  contributions jsonb NOT NULL
+);
