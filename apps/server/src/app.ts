@@ -1,31 +1,39 @@
-import Fastify, { type FastifyRequest } from 'fastify'
-import cookie from '@fastify/cookie'
-import staticFiles from '@fastify/static'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { WebSocketServer, WebSocket } from 'ws'
+
+import Fastify, { type FastifyRequest } from 'fastify'
+import { WebSocket, WebSocketServer } from 'ws'
+import { z } from 'zod'
+
+import cookie from '@fastify/cookie'
+import staticFiles from '@fastify/static'
 import {
+  type GameUser,
+  PROTOCOL_VERSION,
+  type ServerEvent,
   commandSchema,
   nicknameSchema,
   roomIdSchema,
-  PROTOCOL_VERSION,
-  type GameUser,
-  type ServerEvent,
 } from '@lights/contracts'
-import { GameError, check } from './errors'
-import { Rooms } from './rooms'
-import { platformContext } from './platform'
+
 import type { Config } from './config'
+import { GameError, check } from './errors'
+import { LoginTransactions, exchangeKookCode, isOAuthConfigured, platformContext } from './platform'
+import { Rooms } from './rooms'
 import type { Repository, Session } from './storage'
 
-const hash = (token: string) => createHash('sha256').update(token).digest('hex')
-const publicUser = (u: GameUser) => ({
-  id: u.id,
-  nickname: u.nickname,
-  completedRounds: u.completedRounds,
-  totalMoves: u.totalMoves,
-})
+function hash(token: string) {
+  return createHash('sha256').update(token).digest('hex')
+}
+function publicUser(u: GameUser) {
+  return {
+    id: u.id,
+    nickname: u.nickname,
+    completedRounds: u.completedRounds,
+    totalMoves: u.totalMoves,
+  }
+}
 export async function createApp(config: Config, repo: Repository, staticRoot?: string) {
   const app = Fastify({
     bodyLimit: 8192,
@@ -37,7 +45,15 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   await app.register(cookie)
   const clients = new Map<string, { ws: WebSocket; id: string; session: Session; alive: boolean }>()
   const tickets = new Map<string, { session: Session; expiresAt: number }>()
-  const send = (ws: WebSocket, event: ServerEvent) => {
+  const transactions = new LoginTransactions()
+  const cookieOptions = {
+    path: '/',
+    httpOnly: true,
+    sameSite: config.mode === 'kook' ? ('none' as const) : ('strict' as const),
+    secure: config.mode === 'kook',
+    ...(config.mode === 'kook' ? { partitioned: true } : {}),
+  }
+  function send(ws: WebSocket, event: ServerEvent) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event))
   }
   const rooms = new Rooms(repo, config.maxPlayers, config.graceMs, (id, event) => {
@@ -49,32 +65,25 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     check(session, 'UNAUTHENTICATED', '请先进入游戏', 401)
     const user = await repo.getUser(session.userId)
     check(user, 'UNAUTHENTICATED', '登录已失效，请重新进入', 401)
-    // 未接平台 provider 时，不允许本地身份冒充 KOOK 身份。
     check(
-      config.mode === 'standalone',
-      'PLATFORM_NOT_CONFIGURED',
-      'KOOK SDK／服务端身份适配尚未配置',
-      503,
+      config.mode === 'standalone'
+        ? user.appId === 'standalone'
+        : isOAuthConfigured(config.kook) && user.appId === config.kook.clientId,
+      'UNAUTHENTICATED',
+      '登录不属于当前游戏模式或应用，请重新登录',
+      401
     )
     return { session, user }
   }
   app.addHook('onRequest', async (req) => {
     const origin = req.headers.origin
     if (req.method !== 'GET' && req.method !== 'HEAD')
-      check(
-        origin && config.allowedOrigins.includes(origin),
-        'ORIGIN_DENIED',
-        '请求来源不允许',
-        403,
-      )
+      check(origin && config.allowedOrigins.includes(origin), 'ORIGIN_DENIED', '请求来源不允许', 403)
   })
   app.setErrorHandler((error, req, reply) => {
     if (error instanceof GameError)
       return reply.code(error.statusCode).send({ code: error.code, message: error.message })
-    if (
-      (error instanceof Error && error.name === 'ZodError') ||
-      (error as { statusCode?: number })?.statusCode === 400
-    )
+    if ((error instanceof Error && error.name === 'ZodError') || (error as { statusCode?: number })?.statusCode === 400)
       return reply.code(400).send({
         code: 'INVALID_INPUT',
         message: '输入内容不合法，请检查后重试',
@@ -89,21 +98,94 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     platform: platformContext(config.mode),
     reconnectGraceMs: config.graceMs,
     devTools: config.devFaults,
+    oauthConfigured: config.mode === 'kook' && isOAuthConfigured(config.kook),
   }))
-  app.post('/api/dev/session', async (req, reply) => {
+  function requireKook() {
     check(
-      config.mode === 'standalone',
+      config.mode === 'kook' && isOAuthConfigured(config.kook),
       'PLATFORM_NOT_CONFIGURED',
-      '真实 KOOK 模式尚未配置，不接受本地登录',
-      503,
+      '游戏服务端尚未配置 KOOK OAuth',
+      503
     )
+  }
+  async function revokeSession(sessionHash: string) {
+    const session = await repo.getSession(sessionHash)
+    if (session) {
+      const active = clients.get(session.userId)
+      if (active?.session.hash === sessionHash) active.ws.close(4001, 'logged out')
+      // An old login response must not remove a newer session's player from its room.
+      if (!active || active.session.hash === sessionHash) {
+        const room = rooms.forUser(session.userId)
+        if (room) await rooms.leave(room.id, session.userId)
+      }
+      await repo.deleteSession(sessionHash)
+    }
+  }
+  app.post('/api/kook/login/start', async (req, reply) => {
+    requireKook()
+    const existing = req.cookies.lights_oauth
+    const browser = existing && /^[a-f0-9]{64}$/.test(existing) ? existing : randomBytes(32).toString('hex')
+    const state = transactions.begin(hash(browser))
+    reply.header('Cache-Control', 'no-store').setCookie('lights_oauth', browser, { ...cookieOptions, maxAge: 300 })
+    return { state }
+  })
+  app.post('/api/kook/login/complete', async (req, reply) => {
+    requireKook()
+    const input = z
+      .object({ state: z.string().regex(/^[a-f0-9]{64}$/), code: z.string().min(1).max(4096).regex(/^\S+$/) })
+      .strict()
+      .parse(req.body)
+    const transaction = transactions.consume(input.state, hash(req.cookies.lights_oauth ?? ''))
+    const grant = await exchangeKookCode(config.kook, input.code)
+    transactions.assertActive(transaction)
+    const user = await repo.upsertUser(grant.identity)
+    transactions.assertActive(transaction)
+    const token = randomBytes(32).toString('hex')
+    const session: Session = {
+      hash: hash(token),
+      userId: user.id,
+      expiresAt: Math.min(Date.now() + config.sessionTtlMs, grant.expiresAt),
+      instanceId: null,
+    }
+    // ready().instanceId is display metadata, never a game-server authorization credential.
+    await repo.saveSession(session)
+    transaction.sessionHash = session.hash
+    if (transaction.cancelled || transaction.expiresAt <= Date.now()) {
+      await repo.deleteSession(session.hash)
+      transactions.assertActive(transaction)
+    }
+    const oldToken = req.cookies.lights_session
+    const old = oldToken ? await repo.getSession(hash(oldToken)) : null
+    if (old) {
+      if (old.userId !== user.id) await revokeSession(old.hash)
+      else {
+        await repo.deleteSession(old.hash)
+        const active = clients.get(user.id)
+        if (active?.session.hash === old.hash) active.ws.close(4001, 'session renewed')
+      }
+    }
+    transactions.assertActive(transaction)
+    reply.header('Cache-Control', 'no-store').setCookie('lights_session', token, {
+      ...cookieOptions,
+      maxAge: Math.max(1, Math.floor((session.expiresAt - Date.now()) / 1000)),
+    })
+    return { user: publicUser(user), room: rooms.forUser(user.id), platform: platformContext(config.mode) }
+  })
+  app.post('/api/kook/login/cancel', async (req) => {
+    const { state } = z
+      .object({ state: z.string().regex(/^[a-f0-9]{64}$/) })
+      .strict()
+      .parse(req.body)
+    for (const session of transactions.cancel(hash(req.cookies.lights_oauth ?? ''), state)) await revokeSession(session)
+    return { ok: true }
+  })
+  app.post('/api/dev/session', async (req, reply) => {
+    check(config.mode === 'standalone', 'PLATFORM_NOT_CONFIGURED', '真实 KOOK 模式尚未配置，不接受本地登录', 503)
     const nickname = nicknameSchema.parse((req.body as { nickname?: unknown })?.nickname)
-    const old = req.cookies.lights_session
-      ? await repo.getSession(hash(req.cookies.lights_session))
-      : null
+    const old = req.cookies.lights_session ? await repo.getSession(hash(req.cookies.lights_session)) : null
     if (old) {
       const user = await repo.getUser(old.userId)
-      if (user)
+      if (user?.appId === 'standalone')
         return {
           user: publicUser(user),
           room: rooms.forUser(user.id),
@@ -145,16 +227,10 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     }
   })
   app.post('/api/logout', async (req, reply) => {
-    const session = req.cookies.lights_session
-      ? await repo.getSession(hash(req.cookies.lights_session))
-      : null
-    if (session) {
-      const room = rooms.forUser(session.userId)
-      if (room) await rooms.leave(room.id, session.userId)
-      clients.get(session.userId)?.ws.close(4001, 'logged out')
-      await repo.deleteSession(session.hash)
-    }
-    reply.clearCookie('lights_session', { path: '/' })
+    if (req.cookies.lights_session) await revokeSession(hash(req.cookies.lights_session))
+    for (const session of transactions.cancel(hash(req.cookies.lights_oauth ?? ''))) await revokeSession(session)
+    reply.clearCookie('lights_session', cookieOptions)
+    reply.clearCookie('lights_oauth', cookieOptions)
     return { ok: true }
   })
   app.post('/api/rooms', async (req) => {
@@ -190,16 +266,8 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     return { ticket }
   })
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192 })
-  const upgrade = (
-    req: import('node:http').IncomingMessage,
-    socket: import('node:stream').Duplex,
-    head: Buffer,
-  ) => {
-    if (
-      req.url !== '/ws' ||
-      !req.headers.origin ||
-      !config.allowedOrigins.includes(req.headers.origin)
-    ) {
+  function upgrade(req: import('node:http').IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) {
+    if (req.url !== '/ws' || !req.headers.origin || !config.allowedOrigins.includes(req.headers.origin)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
       return
     }
@@ -227,9 +295,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
           authenticating = true
           const token = data as { type?: string; ticket?: string }
           const entry =
-            token.type === 'authenticate' && typeof token.ticket === 'string'
-              ? tickets.get(token.ticket)
-              : null
+            token.type === 'authenticate' && typeof token.ticket === 'string' ? tickets.get(token.ticket) : null
           if (token.ticket) tickets.delete(token.ticket)
           if (
             !entry ||
@@ -283,10 +349,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
           })
           return
         }
-        send(
-          ws,
-          await rooms.handle(current.userId, current.connectionId, parsed.data, config.devFaults),
-        )
+        send(ws, await rooms.handle(current.userId, current.connectionId, parsed.data, config.devFaults))
       } catch (e) {
         app.log.error({ err: e }, 'websocket command failed')
         send(ws, {
@@ -307,9 +370,9 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   let lastPing = Date.now()
   const sweep = setInterval(() => {
     const now = Date.now()
+    transactions.sweep()
     for (const [key, t] of tickets) if (t.expiresAt <= now) tickets.delete(key)
-    for (const c of clients.values())
-      if (c.session.expiresAt <= now) c.ws.close(4001, 'session expired')
+    for (const c of clients.values()) if (c.session.expiresAt <= now) c.ws.close(4001, 'session expired')
     if (now - lastPing >= 15000) {
       lastPing = now
       for (const c of clients.values()) {
@@ -337,7 +400,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     app.setNotFoundHandler((req, reply) =>
       req.url.startsWith('/api') || req.url.startsWith('/ws')
         ? reply.code(404).send({ code: 'NOT_FOUND', message: '接口不存在' })
-        : reply.sendFile('index.html'),
+        : reply.sendFile('index.html')
     )
   }
   await app.ready()

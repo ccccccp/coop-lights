@@ -66,10 +66,15 @@ export interface GameUser {
 export interface PlatformContext {
   mode: 'standalone' | 'kook'
   instanceId: string | null
-  contextRevision: number | null
   capabilities: string[]
   authorizedScopes: string[]
-  status: 'ready' | 'unavailable'
+  availableScopes: string[]
+  status: 'initializing' | 'ready' | 'recovering' | 'unavailable' | 'closed'
+  connectionState: string
+  epoch: number
+  invitedRoomId: string | null
+  participantsRevision: number | null
+  message: string
 }
 export interface SessionResponse {
   user: GameUser
@@ -90,12 +95,26 @@ export type ServerEvent =
   | { type: 'session.replaced' }
   | { type: 'error'; code: string; message: string }
 export interface PlatformAdapter {
-  initialize(): Promise<SessionResponse>
-  login?(nickname: string): Promise<SessionResponse>
+  initialize(): Promise<{ session: SessionResponse | null; platform: PlatformContext }>
+  login(
+    nickname: string,
+    scopes?: string[]
+  ): Promise<{ status: 'logged_in'; session: SessionResponse } | { status: 'cancelled' }>
+  logout(): Promise<void>
   invite(roomId: string): Promise<{ status: 'submitted' | 'cancelled'; url?: string }>
-  subscribeContext?(listener: () => void): () => void
+  subscribe(listener: (event: PlatformEvent) => void): () => void
+  reportLoaded(): Promise<void>
+  inspect?(resource: PlatformResource, cursor?: string): Promise<PlatformInspection>
+  openOfficialServer?(): Promise<{ status: string }>
   dispose(): void
 }
+export type PlatformResource = 'friends' | 'channel' | 'participants' | 'officialServer'
+export interface PlatformInspection {
+  data: unknown
+  nextCursor: string | null
+}
+export type PlatformEvent =
+  { type: 'context'; platform: PlatformContext } | { type: 'session_invalidated'; message: string }
 export interface ErrorBody {
   code: string
   message: string

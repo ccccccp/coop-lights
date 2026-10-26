@@ -1,35 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { GameUser, PlatformAdapter, PlatformContext, RoomSnapshot } from '@lights/contracts'
-import { api, ApiError } from './api'
-import { createPlatformAdapter } from './platform'
-import { useConnection } from './useConnection'
 
-const messageOf = (e: unknown) => (e instanceof Error ? e.message : '操作失败，请重试')
-const prettyTime = (ms: number) =>
-  `${Math.floor(Math.max(0, ms) / 60000)
+import type { GameUser, PlatformAdapter, PlatformContext, RoomSnapshot } from '@lights/contracts'
+
+import { PlatformControls } from './components/PlatformControls'
+
+import { api } from '../api'
+import { createPlatformAdapter } from '../platform'
+import { useConnection } from '../useConnection'
+
+import './index.css'
+
+function messageOf(e: unknown) {
+  return e instanceof Error ? e.message : '操作失败，请重试'
+}
+function prettyTime(ms: number) {
+  return `${Math.floor(Math.max(0, ms) / 60000)
     .toString()
     .padStart(2, '0')}:${Math.floor((Math.max(0, ms) / 1000) % 60)
     .toString()
     .padStart(2, '0')}`
-function Mark() {
-  return (
-    <span className="brand-mark" aria-hidden="true">
-      <i />
-      <i />
-      <i />
-      <i />
-    </span>
-  )
 }
 export function App() {
   const [booted, setBooted] = useState(false),
     [user, setUser] = useState<GameUser | null>(null)
   const [room, setRoom] = useState<RoomSnapshot | null>(null),
     [nickname, setNickname] = useState('')
-  const [roomCode, setRoomCode] = useState(
-    () => new URL(location.href).searchParams.get('room')?.toUpperCase() ?? '',
-  )
+  const [roomCode, setRoomCode] = useState(() => new URL(location.href).searchParams.get('room')?.toUpperCase() ?? '')
   const [platform, setPlatform] = useState<PlatformContext | null>(null)
+  const [bootAttempt, setBootAttempt] = useState(0)
   const [health, setHealth] = useState<Awaited<ReturnType<typeof api.health>> | null>(null)
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(''),
@@ -38,45 +36,74 @@ export function App() {
     [now, setNow] = useState(Date.now())
   const adapter = useRef<PlatformAdapter | null>(null),
     actionLock = useRef(false)
+  const sessionGeneration = useRef(0)
   const updateRoom = useCallback(
     (next: RoomSnapshot | null) =>
-      setRoom((prev) =>
-        prev && next && prev.id === next.id && prev.version > next.version ? prev : next,
-      ),
-    [],
+      setRoom((prev) => (prev && next && prev.id === next.id && prev.version > next.version ? prev : next)),
+    []
   )
   const refreshUser = useCallback(() => {
+    const generation = sessionGeneration.current
     void api
       .session()
-      .then((s) => setUser(s.user))
+      .then((s) => {
+        if (generation === sessionGeneration.current) setUser(s.user)
+      })
       .catch(() => undefined)
   }, [])
-  const connection = useConnection(user?.id, updateRoom, setNotice, refreshUser)
+  const connection = useConnection(
+    platform?.status === 'ready' ? user?.id : undefined,
+    updateRoom,
+    setNotice,
+    refreshUser
+  )
   useEffect(() => {
     let alive = true
+    let unsubscribe: (() => void) | undefined
+    let current: PlatformAdapter | null = null
+    setBooted(false)
     void (async () => {
       try {
         const h = await api.health()
         if (!alive) return
         setHealth(h)
         adapter.current = createPlatformAdapter(h.platform.mode)
-        const s = await adapter.current.initialize()
+        current = adapter.current
+        unsubscribe = current.subscribe((event) => {
+          if (!alive) return
+          if (event.type === 'context') {
+            setPlatform(event.platform)
+            if (event.platform.invitedRoomId) setRoomCode(event.platform.invitedRoomId)
+          } else {
+            sessionGeneration.current++
+            setUser(null)
+            setRoom(null)
+            setNotice(event.message)
+          }
+        })
+        const result = await current.initialize()
         if (!alive) return
-        setUser(s.user)
-        setRoom(s.room)
-        setPlatform(s.platform)
+        setUser(result.session?.user ?? null)
+        setRoom(result.session?.room ?? null)
+        setPlatform(result.platform)
       } catch (e) {
-        if (alive && !(e instanceof ApiError && e.code === 'UNAUTHENTICATED'))
-          setNotice(messageOf(e))
+        if (alive) setNotice(messageOf(e))
       } finally {
         if (alive) setBooted(true)
       }
     })()
     return () => {
       alive = false
-      adapter.current?.dispose()
+      sessionGeneration.current++
+      unsubscribe?.()
+      current?.dispose()
     }
-  }, [])
+  }, [bootAttempt])
+  useEffect(() => {
+    if (booted && platform?.status === 'ready') {
+      void adapter.current?.reportLoaded().catch((error) => setNotice(`加载上报失败：${messageOf(error)}`))
+    }
+  }, [booted, platform?.status])
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
@@ -115,27 +142,38 @@ export function App() {
     connected &&
     room.players.every((p) => !p.online || p.ready) &&
     (room.status !== 'finished' || round?.saveState === 'saved')
-  const login = () =>
-    action(async () => {
-      if (!adapter.current?.login) throw new Error('此模式需要由 KOOK 完成登录')
-      const s = await adapter.current.login(nickname)
-      setUser(s.user)
-      setRoom(s.room)
-      setPlatform(s.platform)
+  function login(scopes?: string[]) {
+    return action(async () => {
+      if (!adapter.current) throw new Error('游戏尚未初始化')
+      const result = await adapter.current.login(nickname, scopes)
+      if (result.status === 'cancelled') {
+        setNotice('已取消授权，可以继续留在游戏页面')
+        return
+      }
+      sessionGeneration.current++
+      setUser(result.session.user)
+      setRoom(result.session.room)
+      setPlatform(result.session.platform)
+      connection.reconnect()
     })
+  }
+  const kook = health?.platform.mode === 'kook'
   return (
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="/" onClick={(e) => e.preventDefault()}>
-          <Mark />
+          <span className="brand-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
           <span>
             CO-OP <b>LIGHTS</b>
           </span>
         </a>
         <div className="topbar-right">
-          <span className="mode-pill">
-            {health?.platform.mode === 'kook' ? 'KOOK 模式' : '独立联机'}
-          </span>
+          <span className="mode-pill">{health?.platform.mode === 'kook' ? 'KOOK 模式' : '独立联机'}</span>
           {user && (
             <>
               <span className="user-name">{user.nickname}</span>
@@ -143,10 +181,10 @@ export function App() {
                 className="text-button"
                 onClick={() =>
                   void action(async () => {
-                    await api.logout()
+                    sessionGeneration.current++
+                    await adapter.current?.logout()
                     setUser(null)
                     setRoom(null)
-                    setPlatform(null)
                   })
                 }
               >
@@ -203,24 +241,40 @@ export function App() {
             >
               <span className="small-mark">✦</span>
               <h2>准备好一起解谜了吗？</h2>
-              <p>取一个昵称，先进入大厅。</p>
-              <label htmlFor="nickname">你的昵称</label>
-              <input
-                id="nickname"
-                data-testid="nickname"
-                maxLength={20}
-                value={nickname}
-                autoComplete="off"
-                placeholder="比如：点灯小队长"
-                onChange={(e) => setNickname(e.target.value)}
-                autoFocus
-              />
+              <p>{kook ? '用 KOOK 账号登录后，与朋友一起点灯。' : '取一个昵称，先进入大厅。'}</p>
+              {!kook && (
+                <>
+                  <label htmlFor="nickname">你的昵称</label>
+                  <input
+                    id="nickname"
+                    data-testid="nickname"
+                    maxLength={20}
+                    value={nickname}
+                    autoComplete="off"
+                    placeholder="比如：点灯小队长"
+                    onChange={(e) => setNickname(e.target.value)}
+                    autoFocus
+                  />
+                </>
+              )}
               <button
                 className="primary wide"
-                disabled={busy || !nickname.trim() || health?.platform.mode === 'kook'}
+                data-testid={kook ? 'kook-login' : 'standalone-login'}
+                disabled={busy || (kook ? platform?.status !== 'ready' || !health?.oauthConfigured : !nickname.trim())}
               >
-                {busy ? '正在进入…' : '进入游戏 →'}
+                {busy ? '正在进入…' : kook ? '使用 KOOK 登录 →' : '进入游戏 →'}
               </button>
+              {kook && !health?.oauthConfigured && (
+                <p className="entry-note">游戏服务端尚未配置 KOOK OAuth，请先完成本地配置。</p>
+              )}
+              {kook && platform?.status !== 'ready' && (
+                <p className="entry-note">{platform?.message || '正在连接 KOOK…'}</p>
+              )}
+              {kook && ['unavailable', 'closed'].includes(platform?.status ?? '') && (
+                <button className="text-button" type="button" onClick={() => setBootAttempt((value) => value + 1)}>
+                  重试连接
+                </button>
+              )}
               <p className="entry-note">
                 邀请朋友加入同一房间，
                 <br />
@@ -290,10 +344,7 @@ export function App() {
                     placeholder="ABC234"
                     onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
                   />
-                  <button
-                    className="secondary"
-                    disabled={busy || !connected || roomCode.length !== 6}
-                  >
+                  <button className="secondary" disabled={busy || !connected || roomCode.length !== 6}>
                     加入 →
                   </button>
                 </div>
@@ -319,6 +370,7 @@ export function App() {
                 </span>
                 <button
                   className="secondary small"
+                  disabled={busy || !connected || (kook && !platform?.capabilities.includes('ui.openInviteModal'))}
                   onClick={() =>
                     void action(async () => {
                       const result = await adapter.current!.invite(room.id)
@@ -327,7 +379,7 @@ export function App() {
                     })
                   }
                 >
-                  复制邀请
+                  {kook ? '邀请好友' : '复制邀请'}
                 </button>
                 <button
                   className="text-button"
@@ -356,10 +408,7 @@ export function App() {
                 <div className="progress">
                   <i style={{ width: `${(lit / 16) * 100}%` }} />
                 </div>
-                <div
-                  className={`board ${room.status !== 'playing' ? 'inactive' : ''}`}
-                  data-testid="board"
-                >
+                <div className={`board ${room.status !== 'playing' ? 'inactive' : ''}`} data-testid="board">
                   {(round?.board ?? Array<boolean>(16).fill(true)).map((on, i) => (
                     <button
                       key={i}
@@ -377,7 +426,7 @@ export function App() {
                             roundId: round!.id,
                             expectedVersion: room.version,
                             cell: i,
-                          }),
+                          })
                         )
                       }
                     >
@@ -400,8 +449,7 @@ export function App() {
                     <div>
                       <strong>协作成功！</strong>
                       <p>
-                        用时 {prettyTime(round!.finishedAt! - round!.startedAt)} · 共 {round!.moves}{' '}
-                        次操作
+                        用时 {prettyTime(round!.finishedAt! - round!.startedAt)} · 共 {round!.moves} 次操作
                       </p>
                     </div>
                     <span className="save-label">
@@ -423,7 +471,7 @@ export function App() {
                           type: 'room.ready',
                           roomId: room.id,
                           ready: !me?.ready,
-                        }),
+                        })
                       )
                     }
                   >
@@ -440,7 +488,7 @@ export function App() {
                             type: 'round.start',
                             roomId: room.id,
                             ...(seed.trim() && health?.devTools ? { seed: Number(seed) } : {}),
-                          }),
+                          })
                         )
                       }
                     >
@@ -455,7 +503,7 @@ export function App() {
                           connection.command({
                             type: 'round.retrySave',
                             roomId: room.id,
-                          }),
+                          })
                         )
                       }
                     >
@@ -505,9 +553,7 @@ export function App() {
                 <div className="session-stats">
                   <div>
                     <span>本局用时</span>
-                    <strong>
-                      {round ? prettyTime((round.finishedAt ?? now) - round.startedAt) : '00:00'}
-                    </strong>
+                    <strong>{round ? prettyTime((round.finishedAt ?? now) - round.startedAt) : '00:00'}</strong>
                   </div>
                   <div>
                     <span>操作次数</span>
@@ -535,25 +581,33 @@ export function App() {
             <span className="connection-meta">{user.completedRounds} 次累计通关</span>
           </div>
         )}
-        {user && (
+        {(user || kook) && (
           <details className="test-panel">
             <summary>
-              开发与平台测试面板 <span>SDK 适配入口已预留</span>
+              开发与平台测试面板 <span>{kook ? '真实 SDK · 宿主能力以当前环境为准' : '独立模式'}</span>
             </summary>
             <div className="test-grid">
               <dl>
                 <dt>运行模式</dt>
-                <dd>{platform?.mode ?? 'standalone'}（真实 KOOK SDK 未接入）</dd>
+                <dd>{platform?.mode ?? 'standalone'}</dd>
+                <dt>SDK 状态</dt>
+                <dd data-testid="sdk-state">
+                  {platform?.status} / {platform?.connectionState} · epoch {platform?.epoch ?? 0}
+                </dd>
                 <dt>存储</dt>
                 <dd>{health?.storage}</dd>
                 <dt>平台实例</dt>
-                <dd>{room?.platformInstanceId ?? '无；本地房间不等于 KOOK 实例'}</dd>
+                <dd>{platform?.instanceId ?? '无；独立模式不创建 KOOK 实例'}</dd>
                 <dt>房间 / 版本</dt>
                 <dd>
                   {room?.id ?? '—'} / {room?.version ?? '—'}
                 </dd>
                 <dt>平台能力</dt>
                 <dd>{platform?.capabilities.join(', ') || '无'}</dd>
+                <dt>已授权权限</dt>
+                <dd data-testid="sdk-scopes">{platform?.authorizedScopes.join(', ') || '无'}</dd>
+                <dt>参与者快照版本</dt>
+                <dd data-testid="sdk-participants-revision">{platform?.participantsRevision ?? '未订阅'}</dd>
               </dl>
               <div className="test-actions">
                 {health?.devTools && (
@@ -577,11 +631,7 @@ export function App() {
                           void action(async () => {
                             const r = await api.hint(room!.id)
                             setHint(r.cells[0] ?? null)
-                            setNotice(
-                              r.cells.length
-                                ? `建议点击 ${r.cells[0] + 1} 号灯，黄色边框已标记`
-                                : '棋盘已完成',
-                            )
+                            setNotice(r.cells.length ? `建议点击 ${r.cells[0] + 1} 号灯，黄色边框已标记` : '棋盘已完成')
                           })
                         }
                       >
@@ -595,7 +645,7 @@ export function App() {
                             connection.command({
                               type: 'room.snapshot',
                               roomId: room!.id,
-                            }),
+                            })
                           )
                         }
                       >
@@ -604,7 +654,16 @@ export function App() {
                     </div>
                   </>
                 )}
-                <p>好友、频道成员、官方服务器与广告：等待真实 SDK 提供能力，不模拟成功。</p>
+                {kook && platform && adapter.current && (
+                  <PlatformControls
+                    adapter={adapter.current}
+                    platform={platform}
+                    busy={busy}
+                    run={action}
+                    authorize={login}
+                  />
+                )}
+                {!kook && <p>独立模式仅使用游戏自己的登录、房间与邀请链接。</p>}
               </div>
             </div>
           </details>

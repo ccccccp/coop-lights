@@ -1,8 +1,9 @@
-import { config as loadEnv } from 'dotenv'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { config as loadEnv } from 'dotenv'
 import { z } from 'zod'
-import { existsSync, readFileSync } from 'node:fs'
 
 export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 loadEnv({ path: resolve(projectRoot, '.env'), quiet: true })
@@ -16,19 +17,22 @@ const envSchema = z.object({
   ENABLE_DEV_FAULTS: z.enum(['true', 'false']).default('true'),
   ALLOWED_GAME_ORIGINS: z
     .string()
-    .default(
-      'http://localhost:5178,http://127.0.0.1:5178,http://localhost:5188,http://127.0.0.1:5188',
-    ),
+    .default('http://localhost:5178,http://127.0.0.1:5178,http://localhost:5188,http://127.0.0.1:5188'),
   DATABASE_URL: z.string().default(''),
+  KOOK_CLIENT_ID: z.string().default(''),
+  KOOK_CLIENT_SECRET: z.string().default(''),
+  KOOK_REDIRECT_URI: z.string().default(''),
+  KOOK_TOKEN_URL: z.string().default(''),
+  KOOK_USERINFO_URL: z.string().default(''),
+  KOOK_USER_ID_FIELD: z.enum(['user_open_code', 'user_code', 'id']).optional(),
+  KOOK_USER_NAME_FIELD: z.enum(['username', 'nickname']).default('username'),
 })
 export function getConfig() {
   const e = envSchema.parse(process.env)
   const localPath = resolve(projectRoot, '.local/database.json')
-  const local = existsSync(localPath)
-    ? (JSON.parse(readFileSync(localPath, 'utf8')) as { databaseUrl: string })
-    : null
+  const local = existsSync(localPath) ? (JSON.parse(readFileSync(localPath, 'utf8')) as { databaseUrl: string }) : null
   const databaseUrl = e.DATABASE_URL || local?.databaseUrl || ''
-  if (!databaseUrl) throw new Error('请先运行 pnpm db:setup，或配置专用 PostgreSQL DATABASE_URL')
+  if (!databaseUrl) throw new Error('请先运行 pnpm db:docker / pnpm db:setup，或配置专用 PostgreSQL DATABASE_URL')
   return {
     mode: e.APP_MODE,
     host: e.SERVER_HOST,
@@ -36,12 +40,18 @@ export function getConfig() {
     maxPlayers: e.GAME_MAX_PLAYERS,
     graceMs: e.GAME_RECONNECT_GRACE_MS,
     sessionTtlMs: e.GAME_SESSION_TTL_MS,
-    devFaults:
-      e.ENABLE_DEV_FAULTS === 'true' &&
-      e.APP_MODE === 'standalone' &&
-      process.env.NODE_ENV !== 'production',
+    devFaults: e.ENABLE_DEV_FAULTS === 'true' && e.APP_MODE === 'standalone' && process.env.NODE_ENV !== 'production',
     allowedOrigins: e.ALLOWED_GAME_ORIGINS.split(',').map((x) => new URL(x.trim()).origin),
     databaseUrl,
+    kook: {
+      clientId: e.KOOK_CLIENT_ID,
+      clientSecret: e.KOOK_CLIENT_SECRET,
+      redirectUri: e.KOOK_REDIRECT_URI,
+      tokenUrl: e.KOOK_TOKEN_URL,
+      userInfoUrl: e.KOOK_USERINFO_URL,
+      userIdField: e.KOOK_USER_ID_FIELD,
+      userNameField: e.KOOK_USER_NAME_FIELD,
+    },
   }
 }
 export type Config = ReturnType<typeof getConfig>
