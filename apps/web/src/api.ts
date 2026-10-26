@@ -1,8 +1,9 @@
-import type { SessionResponse, RoomSnapshot } from '@lights/contracts'
+import type { RoomSnapshot, SessionResponse } from '@lights/contracts'
+
 export class ApiError extends Error {
   constructor(
     public code: string,
-    message: string,
+    message: string
   ) {
     super(message)
   }
@@ -26,6 +27,10 @@ export const api = {
   session: () => request<SessionResponse>('/api/session'),
   login: (nickname: string) => request<SessionResponse>('/api/dev/session', { nickname }),
   logout: () => request('/api/logout', {}),
+  beginKookLogin: () => request<{ state: string }>('/api/kook/login/start', {}),
+  completeKookLogin: (code: string, state: string) =>
+    request<SessionResponse>('/api/kook/login/complete', { code, state }),
+  cancelKookLogin: (state: string) => request('/api/kook/login/cancel', { state }),
   create: () => request<{ room: RoomSnapshot }>('/api/rooms', {}),
   join: (id: string) => request<{ room: RoomSnapshot }>(`/api/rooms/${id}/join`, {}),
   leave: (id: string) => request(`/api/rooms/${id}/leave`, {}),
@@ -36,6 +41,7 @@ export const api = {
       storage: string
       reconnectGraceMs: number
       devTools: boolean
+      oauthConfigured: boolean
       platform: { mode: string }
     }>('/api/health'),
 }

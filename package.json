@@ -12,17 +12,26 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:sdk": "playwright test --config playwright.sdk.config.ts",
+    "dev:sdk": "pnpm build && tsx scripts/sdk-test-server.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
     "start": "pnpm --dir apps/server start",
     "db:migrate": "pnpm --dir apps/server db:migrate",
+    "db:docker": "node scripts/docker-database.mjs",
+    "db:docker:stop": "node scripts/docker-database.mjs --stop",
     "db:setup": "pnpm --dir apps/server db:setup",
     "db:stop": "pnpm --dir apps/server db:stop"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
     "@playwright/test": "^1.58.0",
+    "@kookapp/kook-bridge-channel": "1.0.15",
+    "@trivago/prettier-plugin-sort-imports": "6.0.2",
     "concurrently": "^9.2.0",
+    "esbuild": "^0.25.10",
     "prettier": "^3.6.2",
     "typescript": "^5.9.2",
+    "tsx": "^4.20.5",
     "vitest": "^3.2.4"
   }
 }

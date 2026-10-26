@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+
 import pg from 'pg'
+
 import type { GameUser } from '@lights/contracts'
 
 export interface Identity {
@@ -13,6 +15,9 @@ export interface Session {
   expiresAt: number
   instanceId: string | null
 }
+export interface StoredUser extends GameUser {
+  appId: string
+}
 export interface Settlement {
   roundId: string
   roomId: string
@@ -22,8 +27,8 @@ export interface Settlement {
 }
 export interface Repository {
   kind: 'postgres'
-  getUser(id: string): Promise<GameUser | null>
-  upsertUser(identity: Identity): Promise<GameUser>
+  getUser(id: string): Promise<StoredUser | null>
+  upsertUser(identity: Identity): Promise<StoredUser>
   saveSession(session: Session): Promise<void>
   getSession(hash: string): Promise<Session | null>
   deleteSession(hash: string): Promise<void>
@@ -42,9 +47,10 @@ export class PostgresRepository implements Repository {
       connectionTimeoutMillis: 5000,
     })
   }
-  private user(row: Record<string, unknown>): GameUser {
+  private user(row: Record<string, unknown>): StoredUser {
     return {
       id: String(row.id),
+      appId: String(row.app_id),
       nickname: String(row.nickname),
       completedRounds: Number(row.completed_rounds),
       totalMoves: Number(row.total_moves),
@@ -61,22 +67,24 @@ export class PostgresRepository implements Repository {
   async upsertUser(i: Identity) {
     const r = await this.pool.query(
       'INSERT INTO lights_users(id,app_id,open_code,nickname) VALUES($1,$2,$3,$4) ON CONFLICT(app_id,open_code) DO UPDATE SET nickname=EXCLUDED.nickname RETURNING *',
-      [randomUUID(), i.appId, i.openCode, i.nickname],
+      [randomUUID(), i.appId, i.openCode, i.nickname]
     )
     return this.user(r.rows[0])
   }
   async saveSession(s: Session) {
     await this.pool.query('DELETE FROM lights_sessions WHERE expires_at<=$1', [Date.now()])
-    await this.pool.query(
-      'INSERT INTO lights_sessions(hash,user_id,expires_at,instance_id) VALUES($1,$2,$3,$4)',
-      [s.hash, s.userId, s.expiresAt, s.instanceId],
-    )
+    await this.pool.query('INSERT INTO lights_sessions(hash,user_id,expires_at,instance_id) VALUES($1,$2,$3,$4)', [
+      s.hash,
+      s.userId,
+      s.expiresAt,
+      s.instanceId,
+    ])
   }
   async getSession(hash: string) {
-    const r = await this.pool.query(
-        'SELECT * FROM lights_sessions WHERE hash=$1 AND expires_at>$2',
-        [hash, Date.now()],
-      ),
+    const r = await this.pool.query('SELECT * FROM lights_sessions WHERE hash=$1 AND expires_at>$2', [
+        hash,
+        Date.now(),
+      ]),
       s = r.rows[0]
     return s
       ? {
@@ -96,13 +104,13 @@ export class PostgresRepository implements Repository {
       await client.query('BEGIN')
       const inserted = await client.query(
         'INSERT INTO lights_rounds(round_id,room_id,finished_at,moves,contributions) VALUES($1,$2,$3,$4,$5) ON CONFLICT(round_id) DO NOTHING RETURNING round_id',
-        [s.roundId, s.roomId, s.finishedAt, s.moves, s.contributions],
+        [s.roundId, s.roomId, s.finishedAt, s.moves, s.contributions]
       )
       if (inserted.rowCount)
         for (const [userId, moves] of Object.entries(s.contributions))
           await client.query(
             'UPDATE lights_users SET completed_rounds=completed_rounds+1,total_moves=total_moves+$2 WHERE id=$1',
-            [userId, moves],
+            [userId, moves]
           )
       await client.query('COMMIT')
     } catch (e) {

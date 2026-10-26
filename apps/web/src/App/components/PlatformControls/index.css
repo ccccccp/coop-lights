@@ -1,0 +1,32 @@
+.platform-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+
+  .platform-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .platform-data {
+    margin: 0;
+    padding: 12px;
+    max-height: 320px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    background: #101b17;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .platform-message,
+  .platform-note {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+}
