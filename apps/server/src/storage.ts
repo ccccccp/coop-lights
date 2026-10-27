@@ -8,6 +8,7 @@ export interface Identity {
   appId: string
   openCode: string
   nickname: string
+  avatarUrl?: string | null
 }
 export interface Session {
   hash: string
@@ -52,6 +53,7 @@ export class PostgresRepository implements Repository {
       id: String(row.id),
       appId: String(row.app_id),
       nickname: String(row.nickname),
+      avatarUrl: typeof row.avatar_url === 'string' ? row.avatar_url : null,
       completedRounds: Number(row.completed_rounds),
       totalMoves: Number(row.total_moves),
     }
@@ -66,8 +68,8 @@ export class PostgresRepository implements Repository {
   }
   async upsertUser(i: Identity) {
     const r = await this.pool.query(
-      'INSERT INTO lights_users(id,app_id,open_code,nickname) VALUES($1,$2,$3,$4) ON CONFLICT(app_id,open_code) DO UPDATE SET nickname=EXCLUDED.nickname RETURNING *',
-      [randomUUID(), i.appId, i.openCode, i.nickname]
+      'INSERT INTO lights_users(id,app_id,open_code,nickname,avatar_url) VALUES($1,$2,$3,$4,$5) ON CONFLICT(app_id,open_code) DO UPDATE SET nickname=EXCLUDED.nickname,avatar_url=EXCLUDED.avatar_url RETURNING *',
+      [randomUUID(), i.appId, i.openCode, i.nickname, i.avatarUrl ?? null]
     )
     return this.user(r.rows[0])
   }

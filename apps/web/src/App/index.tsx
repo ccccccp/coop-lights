@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameUser, PlatformAdapter, PlatformContext, RoomSnapshot } from '@lights/contracts'
 
 import { PlatformControls } from './components/PlatformControls'
+import { UserAvatar } from './components/UserAvatar'
 
 import { api } from '../api'
 import { createPlatformAdapter } from '../platform'
@@ -37,6 +38,7 @@ export function App() {
   const adapter = useRef<PlatformAdapter | null>(null),
     actionLock = useRef(false)
   const sessionGeneration = useRef(0)
+  const autoLoginAttempt = useRef<PlatformAdapter | null>(null)
   const updateRoom = useCallback(
     (next: RoomSnapshot | null) =>
       setRoom((prev) => (prev && next && prev.id === next.id && prev.version > next.version ? prev : next)),
@@ -145,7 +147,11 @@ export function App() {
   function login(scopes?: string[]) {
     return action(async () => {
       if (!adapter.current) throw new Error('游戏尚未初始化')
-      const result = await adapter.current.login(nickname, scopes)
+      const current = adapter.current
+      const generation = sessionGeneration.current
+      autoLoginAttempt.current = current
+      const result = await current.login(nickname, scopes)
+      if (adapter.current !== current || sessionGeneration.current !== generation) return
       if (result.status === 'cancelled') {
         setNotice('已取消授权，可以继续留在游戏页面')
         return
@@ -159,6 +165,23 @@ export function App() {
   }
   const kook = health?.platform.mode === 'kook'
   const loginAvailable = !!health?.oauthConfigured && !!platform?.availableScopes.includes('profile.basic')
+  useEffect(() => {
+    const current = adapter.current
+    if (
+      !booted ||
+      !kook ||
+      !loginAvailable ||
+      platform?.status !== 'ready' ||
+      user ||
+      busy ||
+      !current ||
+      autoLoginAttempt.current === current
+    )
+      return
+    // 每次启动只自动请求一次；取消、失败或主动注销后由用户点击重试。
+    autoLoginAttempt.current = current
+    void login()
+  }, [booted, kook, loginAvailable, platform?.status, user, busy])
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -177,7 +200,10 @@ export function App() {
           <span className="mode-pill">{health?.platform.mode === 'kook' ? 'KOOK 模式' : '独立联机'}</span>
           {user && (
             <>
-              <span className="user-name">{user.nickname}</span>
+              <UserAvatar nickname={user.nickname} avatarUrl={user.avatarUrl} className="avatar-account" />
+              <span className="user-name" data-testid="current-user-name">
+                {user.nickname}
+              </span>
               <button
                 className="text-button"
                 onClick={() =>
@@ -526,10 +552,12 @@ export function App() {
                 <div className="players">
                   {room.players.map((p, index) => (
                     <div className="player" key={p.id}>
-                      <span className={`avatar avatar-${index}`}>
-                        <span>{p.nickname.slice(0, 1)}</span>
-                        <i className={p.online ? 'online' : ''} />
-                      </span>
+                      <UserAvatar
+                        nickname={p.nickname}
+                        avatarUrl={p.avatarUrl}
+                        online={p.online}
+                        className={`avatar-${index}`}
+                      />
                       <div className="player-info">
                         <strong>
                           {p.nickname}

@@ -216,7 +216,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         })
         await refresh()
         // A stored game cookie cannot establish which KOOK account opened this new binding.
-        // A fresh, user-triggered code exchange restores that account's existing game room.
+        // A fresh OAuth code exchange restores that account's existing game room.
         return { session: null, platform: snapshot() }
       })().catch((error) => {
         fail(error)

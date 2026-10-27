@@ -69,7 +69,7 @@ async function fixture(allowedOrigins = ['https://game.test']) {
     })
     return { transaction, result }
   }
-  return { http, start, login, oauth, repo, app }
+  return { http, start, login, oauth, repo, app, admin }
 }
 
 test('OAuth creates a browser-bound one-use transaction and a server-verified game identity', async () => {
@@ -86,6 +86,7 @@ test('OAuth creates a browser-bound one-use transaction and a server-verified ga
   const result = await f.http('/api/kook/login/complete', transaction.cookie, payload)
   expect(result.status).toBe(200)
   expect(result.data.user.nickname).toBe('模拟玩家阿青')
+  expect(result.data.user.avatarUrl).toBe('https://avatars.test/alice.svg')
   expect(JSON.stringify(result.data)).not.toMatch(/access_token|refresh_token|client_secret|openCode|appId/)
   expect((await f.http('/api/session', result.cookie)).status).toBe(200)
   expect((await f.http('/api/kook/login/complete', transaction.cookie, payload)).status).toBe(401)
@@ -245,4 +246,88 @@ test('旧 Cookie 协议仍可登录，不能使用 nonce 绕过原 Cookie 事务
   const result = await f.http('/api/kook/login/complete', tx.cookie, payload)
   expect(result.status).toBe(200)
   expect((await f.http('/api/session', result.cookie)).status).toBe(200)
+})
+
+test('OAuth 用户名和头像持久化并进入同一房间快照，重新授权刷新资料且不改变用户和房间', async () => {
+  const f = await fixture()
+  const a = (await f.login()).result
+  const room = await f.http('/api/rooms', a.cookie, {})
+  expect(room.status).toBe(200)
+  const tx = await f.start()
+  const b = await f.http('/api/kook/login/complete', tx.cookie, { state: tx.data.state, code: f.oauth.issue('bob') })
+  const joined = await f.http(`/api/rooms/${room.data.room.id}/join`, b.cookie, {})
+  expect(
+    joined.data.room.players.map((player: { nickname: string; avatarUrl: string }) => [
+      player.nickname,
+      player.avatarUrl,
+    ])
+  ).toEqual([
+    ['模拟玩家阿青', 'https://avatars.test/alice.svg'],
+    ['模拟玩家小林', 'https://avatars.test/bob.svg'],
+  ])
+  expect((await f.repo.getUser(b.data.user.id))?.avatarUrl).toBe('https://avatars.test/bob.svg')
+  f.oauth.setProfile('bob', { username: '小林的新名字', avatar: 'https://avatars.test/bob-new.svg' })
+  const next = await f.start()
+  const updated = await f.http('/api/kook/login/complete', `${next.cookie}; ${b.cookie}`, {
+    state: next.data.state,
+    code: f.oauth.issue('bob'),
+  })
+  expect(updated.data.user.id).toBe(b.data.user.id)
+  expect(updated.data.room.id).toBe(room.data.room.id)
+  const state = await f.http('/api/session', a.cookie)
+  expect(state.data.room.players.find((player: { id: string }) => player.id === b.data.user.id)).toMatchObject({
+    nickname: '小林的新名字',
+    avatarUrl: 'https://avatars.test/bob-new.svg',
+  })
+})
+
+test('头像缺失或地址不安全时仍能登录并使用空头像，不信任客户端伪造的用户资料', async () => {
+  const f = await fixture()
+  for (const avatar of [
+    '',
+    'javascript:alert(1)',
+    'http://avatars.test/a.png',
+    'https://name:secret@avatars.test/a.png',
+    'x'.repeat(2049),
+  ]) {
+    f.oauth.setProfile('alice', { avatar })
+    const result = (await f.login()).result
+    expect(result.status).toBe(200)
+    expect(result.data.user.avatarUrl).toBeNull()
+  }
+  const tx = await f.start()
+  const forged = await f.http('/api/kook/login/complete', tx.cookie, {
+    state: tx.data.state,
+    code: f.oauth.issue('alice'),
+    nickname: '伪造名字',
+    avatarUrl: 'https://avatars.test/forged.svg',
+  })
+  expect(forged.status).toBe(400)
+})
+
+test('旧数据库幂等增加头像列，更新头像不改变用户标识和累计成绩', async () => {
+  const f = await fixture()
+  await f.admin.query('ALTER TABLE lights_users DROP COLUMN avatar_url')
+  const id = randomUUID()
+  await f.admin.query(
+    'INSERT INTO lights_users(id,app_id,open_code,nickname,completed_rounds,total_moves) VALUES($1,$2,$3,$4,7,42)',
+    [id, 'existing-app', 'existing-open-code', '旧名字']
+  )
+  const migration = await readFile(resolve(projectRoot, 'db/migrations/001_initial.sql'), 'utf8')
+  await f.admin.query(migration)
+  await f.admin.query(migration)
+  expect(await f.repo.getUser(id)).toMatchObject({ id, avatarUrl: null, completedRounds: 7, totalMoves: 42 })
+  const updated = await f.repo.upsertUser({
+    appId: 'existing-app',
+    openCode: 'existing-open-code',
+    nickname: 'KOOK 新名字',
+    avatarUrl: 'https://avatars.test/a.svg',
+  })
+  expect(updated).toMatchObject({
+    id,
+    nickname: 'KOOK 新名字',
+    avatarUrl: 'https://avatars.test/a.svg',
+    completedRounds: 7,
+    totalMoves: 42,
+  })
 })

@@ -64,6 +64,7 @@ export class Rooms {
     s.players.push({
       id: user.id,
       nickname: user.nickname,
+      avatarUrl: user.avatarUrl ?? null,
       joinedAt: Date.now(),
       ready: false,
       online: false,
@@ -110,6 +111,19 @@ export class Rooms {
       check(r.snapshot.platformInstanceId === instanceId, 'INSTANCE_MISMATCH', '房间不属于当前平台实例', 403)
       if (this.members.get(user.id) !== id) this.add(r, user)
       return this.snapshot(id)!
+    })
+  }
+  async updateProfile(user: GameUser) {
+    const id = this.members.get(user.id)
+    if (!id) return
+    await this.queue(id, () => {
+      const room = this.rooms.get(id)
+      if (!room || this.members.get(user.id) !== id) return
+      const player = room.snapshot.players.find((value) => value.id === user.id)
+      if (!player || (player.nickname === user.nickname && player.avatarUrl === (user.avatarUrl ?? null))) return
+      player.nickname = user.nickname
+      player.avatarUrl = user.avatarUrl ?? null
+      this.publish(room)
     })
   }
   connect(userId: string, connectionId: string) {

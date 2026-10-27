@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS lights_users (
   total_moves integer NOT NULL DEFAULT 0,
   UNIQUE(app_id, open_code)
 );
+-- 为已有数据库幂等补充头像，不改变用户标识或历史成绩。
+ALTER TABLE lights_users ADD COLUMN IF NOT EXISTS avatar_url text;
 CREATE TABLE IF NOT EXISTS lights_sessions (
   hash text PRIMARY KEY,
   user_id uuid NOT NULL REFERENCES lights_users(id),

@@ -8,6 +8,14 @@ SDK 固定使用 npmjs 已发布的 `0.1.0-alpha.1`，采用 `createKookClient` 
 
 已接入 KOOK 小游戏 SDK，支持登录授权、邀请、平台数据调试、连接恢复与授权撤销。当前可用本地模拟宿主完成自测；真实 KOOK 环境需要补齐应用配置并联调。配置和接入边界见 [SDK 接入说明](docs/sdk-integration.md)。
 
+## KOOK 账号与头像
+
+KOOK 模式下，SDK 连接就绪且具备基本资料权限后，页面自动发起一次 OAuth 授权；无需输入昵称。取消或失败时保留手动重试入口，主动退出登录后不会立即再次弹出授权。独立模式继续使用手动昵称。
+
+用户名和头像由游戏后端从 OAuth 用户资料读取。头像保存到 PostgreSQL 并随房间快照同步，自己和其他已授权玩家均显示 KOOK 用户名与头像；资料更新后重新授权会同步现有房间。头像缺失或加载失败时显示昵称首字。
+
+升级现有数据库时执行 pnpm db:migrate，幂等增加 avatar_url 列，保留用户标识和累计成绩。
+
 ## 本地准备
 
 需要 Node.js 22.18+、pnpm 10.26.0、本机 PostgreSQL 17（也可选用 Docker Desktop）、本机 Chrome。模拟宿主生成 HTTPS 证书还需要 OpenSSL，Windows 默认使用 Git for Windows 自带的版本，也可设置 `OPENSSL_BIN`。

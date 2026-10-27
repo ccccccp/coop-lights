@@ -72,6 +72,16 @@ async function readResponse(url: string, init: RequestInit): Promise<Record<stri
   }
 }
 
+function publicAvatarUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 2048) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password ? url.href : null
+  } catch {
+    return null
+  }
+}
+
 export async function exchangeKookCode(config: Config['kook'], code: string): Promise<VerifiedIdentity> {
   check(isOAuthConfigured(config), 'PLATFORM_NOT_CONFIGURED', '游戏服务端尚未配置 KOOK OAuth', 503)
   const received = await readResponse(config.tokenUrl, {
@@ -104,7 +114,14 @@ export async function exchangeKookCode(config: Config['kook'], code: string): Pr
     })
     .safeParse({ openCode: profile[config.userIdField!], nickname: profile[config.userNameField] })
   check(identity.success, 'PLATFORM_RESPONSE_INVALID', 'KOOK 用户身份字段与配置不一致', 502)
-  return { identity: { appId: config.clientId, ...identity.data }, expiresAt }
+  return {
+    identity: {
+      appId: config.clientId,
+      ...identity.data,
+      avatarUrl: publicAvatarUrl(profile.avatar ?? profile.avatarUrl ?? profile.avatar_url),
+    },
+    expiresAt,
+  }
 }
 
 interface LoginTransaction {

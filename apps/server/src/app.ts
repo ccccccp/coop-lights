@@ -32,6 +32,7 @@ function publicUser(u: GameUser) {
   return {
     id: u.id,
     nickname: u.nickname,
+    avatarUrl: u.avatarUrl ?? null,
     completedRounds: u.completedRounds,
     totalMoves: u.totalMoves,
   }
@@ -195,6 +196,8 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
         if (active?.session.hash === old.hash) active.ws.close(4001, 'session renewed')
       }
     }
+    transactions.assertActive(transaction)
+    await rooms.updateProfile(user)
     transactions.assertActive(transaction)
     reply.header('Cache-Control', 'no-store').setCookie('lights_session', token, {
       ...cookieOptions,

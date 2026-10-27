@@ -3,8 +3,8 @@ import { createServer } from 'node:http'
 
 export async function createMockOAuth() {
   const accounts = {
-    alice: { user_open_code: 'fixture-alice', username: '模拟玩家阿青' },
-    bob: { user_open_code: 'fixture-bob', username: '模拟玩家小林' },
+    alice: { user_open_code: 'fixture-alice', username: '模拟玩家阿青', avatar: 'https://avatars.test/alice.svg' },
+    bob: { user_open_code: 'fixture-bob', username: '模拟玩家小林', avatar: 'https://avatars.test/bob.svg' },
   }
   type Account = (typeof accounts)[keyof typeof accounts]
   const codes = new Map<string, { profile: Account; expiresAt: number }>()
@@ -77,6 +77,9 @@ export async function createMockOAuth() {
     exchanges: () => exchanges,
     setDelay(value: number) {
       delay = value
+    },
+    setProfile(player: 'alice' | 'bob', patch: { username?: string; avatar?: string }) {
+      Object.assign(accounts[player], patch)
     },
     close: () =>
       new Promise<void>((resolve, reject) => {

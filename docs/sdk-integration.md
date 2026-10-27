@@ -4,7 +4,7 @@
 
 ## 前端启动与登录
 
-`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.0-alpha.1` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；登录由用户操作触发。
+`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.0-alpha.1` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
 
 在游戏根目录 `.env` 配置前端宿主白名单，然后重新构建游戏：
 
@@ -27,7 +27,7 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 无需再注入 `window.startCoopLights()`。宿主尚未开放 `profile.basic` 时，欢迎页仍能完成加载和续期，登录按钮禁用并说明原因；这不建立游戏账号，也不替代 OAuth。联机游玩仍需真实授权服务。宿主关闭游戏后 SDK 停止探测，页面卸载时销毁适配器与订阅；退出是否成功由宿主的 leave 接口决定。
 
-新页面不会仅凭已有游戏 cookie 自动恢复 KOOK 身份。用户点击登录并完成本次授权码交换后，后端可恢复相同账号仍在宽限期内的游戏房间。
+新页面不会仅凭已有游戏 cookie 自动恢复 KOOK 身份。完成本次 OAuth 授权码交换后，后端可恢复相同账号仍在宽限期内的游戏房间。
 
 ## 服务端配置
 
@@ -53,7 +53,7 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 ## 授权链路与游戏会话
 
 1. 游戏生成仅驻留内存的随机 `clientNonce`，调用原有 `/api/kook/login/start`；后端签发随机 state，以 nonce 哈希和请求来源绑定本次事务。未传 nonce 的旧调用继续使用 HttpOnly Cookie 绑定。
-2. 用户操作触发 `sdk.session.get({ state, scopes })`；取消作为正常结果返回。
+2. SDK 就绪后自动调用一次 `sdk.session.get({ state, scopes })`；取消作为正常结果返回，页面保留重试入口且不会循环弹出授权。
 3. 游戏提交 `code`、`state` 和本次 `clientNonce` 到原有 `/api/kook/login/complete`，不提交用户身份或实例身份。
 4. 后端一次性消费 state，向配置的 OAuth 服务交换 token、读取用户身份，并创建自己的游戏会话。KOOK token 和应用密钥不会返回浏览器；nonce 调用额外取得游戏自己的随机 `gameToken`，仅驻留前端模块内存，用作 API 的 Bearer 凭证，不写入存储或页面展示状态。Cookie 调用的响应保持兼容。
 5. 游戏继续使用已有的房间 HTTP API、一次性 WebSocket 票据及服务端点灯协议。
@@ -97,3 +97,9 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 自动验证命令见 [README](../README.md)。`pnpm test:sdk` 自动忽略仅本地测试证书，使用隔离 schema；桌面和窄屏截图输出到 `.sdk-test/results/`。手动测试需要先分别接受两个 HTTPS 来源的本地证书。
 
 后续真实联调需提供可登录的测试环境和应用配置，验证实际 OAuth 响应、账号切换、邀请、权限撤销、恢复和 iframe cookie 行为。本地测试不覆盖真实客户端或平台服务实现。
+
+## OAuth 用户资料与房间头像
+
+游戏后端只从 OAuth 用户信息响应读取用户名和头像，客户端不能提交或覆盖这些身份资料。nickname 保持现有 API 字段名，承载 KOOK 用户名；新增可空的 avatarUrl 从 avatar／avatarUrl／avatar_url 读取有效 HTTPS 地址。头像不可用时不阻断登录。
+
+用户资料保存于 lights_users.avatar_url，房间玩家快照同步 avatarUrl；重新授权更新资料时广播给同房间玩家。迁移脚本幂等补充头像列，不改变应用命名空间、用户标识、会话协议或累计成绩。已有数据库执行 pnpm db:migrate 后再启动服务。

@@ -1,0 +1,11 @@
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.user-avatar.avatar-account {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+}

@@ -7,29 +7,49 @@ type FixtureWindow = Window & { sdkFixture: { loaded(): number; calls: string[] 
 function game(page: Page) {
   return page.frameLocator('#game')
 }
-async function open(page: Page, player = 'alice', room?: string) {
+async function open(page: Page, player = 'alice', room?: string, avatarsWork = true) {
+  await page.route('https://avatars.test/**', (route) =>
+    avatarsWork
+      ? route.fulfill({
+          contentType: 'image/svg+xml',
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><circle cx="24" cy="24" r="24" fill="#68a050"/></svg>',
+        })
+      : route.abort()
+  )
   await page.goto(`https://localhost:5190/?player=${player}${room ? `&room=${room}` : ''}`)
-  await expect(game(page).getByTestId('kook-login')).toBeEnabled()
+  await expect(game(page).getByTestId('current-user-name')).toHaveText(
+    player === 'bob' ? '模拟玩家小林' : '模拟玩家阿青'
+  )
+  await expect(game(page).getByText('已连接', { exact: true })).toBeVisible()
+  await expect(game(page).getByTestId('nickname')).toHaveCount(0)
 }
 async function login(page: Page) {
   await game(page).getByTestId('kook-login').click()
   await expect(game(page).getByText('已连接', { exact: true })).toBeVisible()
 }
 
-test('real SDK starts before login; cancellation, optional scopes, paging and revocation work', async ({ page }) => {
+test('SDK ready 自动授权一次，取消后可手动重试，权限与撤销继续生效', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
-  await open(page)
-  await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
+  await page.route('https://avatars.test/**', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"/>',
+    })
+  )
+  await page.goto('https://localhost:5190/?defer-bootstrap')
+  await page.getByRole('button', { name: '取消下次授权' }).click()
+  await page.evaluate(() =>
+    (window as unknown as { sdkFixture: { resumeBootstrap(): void } }).sdkFixture.resumeBootstrap()
+  )
+  await expect(game(page).getByRole('status')).toContainText('已取消授权')
+  await expect(game(page).getByTestId('kook-login')).toBeEnabled()
   expect(
     await page.evaluate(
       () => (window as FixtureWindow).sdkFixture.calls.filter((value) => value === 'session.get').length
     )
-  ).toBe(0)
-  await page.getByRole('button', { name: '取消下次授权' }).click()
-  await game(page).getByTestId('kook-login').click()
-  await expect(game(page).getByRole('status')).toContainText('已取消授权')
-  await expect(game(page).getByTestId('kook-login')).toBeEnabled()
+  ).toBe(1)
+  await expect(game(page).getByTestId('nickname')).toHaveCount(0)
   await login(page)
   await game(page).locator('.test-panel summary').click()
   await expect(game(page).getByRole('button', { name: '读取好友与私聊', exact: true })).toBeDisabled()
@@ -55,7 +75,6 @@ test('real SDK starts before login; cancellation, optional scopes, paging and re
   await expect(game(page).getByTestId('sdk-scopes')).toHaveText('无')
   await expect(game(page).getByTestId('kook-login')).toBeDisabled()
   await open(page)
-  await login(page)
   await game(page).getByTestId('create-room').click()
   await expect(game(page).getByTestId('active-room-code')).toBeVisible()
   await game(page).getByRole('button', { name: '我准备好了', exact: true }).click()
@@ -74,16 +93,34 @@ test('two SDK players exchange code, invite, cooperate and recover the scoped co
   const b = await bContext.newPage()
   try {
     await open(a)
-    await login(a)
     await game(a).getByTestId('create-room').click()
     const id = await game(a).getByTestId('active-room-code').innerText()
     await game(a).getByRole('button', { name: '邀请好友', exact: true }).click()
     await expect(a.locator('#host-status')).toContainText(id)
     await open(b, 'bob', id)
-    await login(b)
     await expect(game(b).getByTestId('room-code')).toHaveValue(id)
     await game(b).getByRole('button', { name: '加入 →', exact: true }).click()
     await expect(game(a).locator('.players')).toContainText('模拟玩家小林')
+    await expect(game(a).locator('.players').getByRole('img', { name: '模拟玩家阿青的 KOOK 头像' })).toHaveAttribute(
+      'src',
+      'https://avatars.test/alice.svg'
+    )
+    await expect(game(a).locator('.players').getByRole('img', { name: '模拟玩家小林的 KOOK 头像' })).toHaveAttribute(
+      'src',
+      'https://avatars.test/bob.svg'
+    )
+    await expect(game(b).locator('.players').getByRole('img', { name: '模拟玩家阿青的 KOOK 头像' })).toBeVisible()
+    await expect
+      .poll(() =>
+        game(a)
+          .locator('.players img')
+          .evaluateAll((images) =>
+            images.every(
+              (image) => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0
+            )
+          )
+      )
+      .toBe(true)
     await game(a).getByRole('button', { name: '我准备好了', exact: true }).click()
     await game(b).getByRole('button', { name: '我准备好了', exact: true }).click()
     await expect(game(a).getByTestId('start-round')).toBeEnabled()
@@ -191,7 +228,7 @@ test('game rejects bootstrap from itself, mismatched host origin and malformed b
   await page.evaluate(() =>
     (window as unknown as { sdkFixture: { resumeBootstrap(): void } }).sdkFixture.resumeBootstrap()
   )
-  await expect(game(page).getByTestId('kook-login')).toBeEnabled()
+  await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家阿青')
   await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
 })
 
@@ -219,7 +256,6 @@ test('Cookie 全部不可用时仍可完成原授权协议、协作通关、撤�
       await route.fulfill({ status: response.status(), body: await response.body(), headers: responseHeaders })
     })
     await open(page)
-    await login(page)
     await game(page).getByTestId('create-room').click()
     await expect(game(page).getByTestId('active-room-code')).toBeVisible()
     await game(page).getByRole('button', { name: '我准备好了', exact: true }).click()
@@ -251,4 +287,22 @@ test('Cookie 全部不可用时仍可完成原授权协议、协作通关、撤�
     await context.close()
     await upstream.dispose()
   }
+})
+
+test('自动登录使用 OAuth 用户名，头像加载失败回退且主动注销后不重复弹授权', async ({ page }) => {
+  await open(page, 'alice', undefined, false)
+  await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家阿青')
+  await expect(game(page).locator('header img')).toHaveCount(0)
+  await expect(game(page).locator('header .user-avatar')).toContainText('模')
+  const before = await page.evaluate(
+    () => (window as FixtureWindow).sdkFixture.calls.filter((value) => value === 'session.get').length
+  )
+  expect(before).toBe(1)
+  await game(page).getByRole('button', { name: '退出登录', exact: true }).click()
+  await expect(game(page).getByTestId('kook-login')).toBeEnabled()
+  expect(
+    await page.evaluate(
+      () => (window as FixtureWindow).sdkFixture.calls.filter((value) => value === 'session.get').length
+    )
+  ).toBe(before)
 })

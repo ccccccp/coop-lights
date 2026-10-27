@@ -30,6 +30,7 @@ export type Command = z.infer<typeof commandSchema>
 export interface Player {
   id: string
   nickname: string
+  avatarUrl?: string | null
   joinedAt: number
   ready: boolean
   online: boolean
@@ -60,6 +61,7 @@ export interface RoomSnapshot {
 export interface GameUser {
   id: string
   nickname: string
+  avatarUrl?: string | null
   completedRounds: number
   totalMoves: number
 }
