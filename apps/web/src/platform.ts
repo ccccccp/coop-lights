@@ -1,7 +1,7 @@
 import { type KookClient, type KookSubscription, type Scope, createKookClient } from '@kookapp/kook-minigame-sdk'
 import type { PlatformAdapter, PlatformContext, PlatformEvent, PlatformResource } from '@lights/contracts'
 
-import { ApiError, api } from './api'
+import { ApiError, api, setGameToken } from './api'
 import { waitForBootstrap } from './bootstrap'
 
 const scopes: Scope[] = ['profile.basic', 'friends.dms.read', 'channel.members.read']
@@ -99,11 +99,13 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
   }
   function clearGameSession(): Promise<unknown> {
     const pending = transaction
+    // 先捕获当前游戏会话；卸载清空内存后，排队的注销仍能精确撤销旧会话。
+    const logout = api.prepareLogout()
     cleanupWork = cleanupWork
       .catch(() => undefined)
       .then(async () => {
         if (pending) await api.cancelKookLogin(pending).catch(() => undefined)
-        await api.logout()
+        await logout()
       })
     return cleanupWork
   }
@@ -251,13 +253,21 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         checkBinding()
         if (result.status === 'cancelled') return { status: 'cancelled' }
         const session = await api.completeKookLogin(result.code, result.state)
-        checkBinding()
+        try {
+          checkBinding()
+        } catch (error) {
+          await api.revokeGameToken(session.gameToken).catch(() => undefined)
+          throw error
+        }
+        setGameToken(session.gameToken ?? null, state)
         loggedIn = true
         patch({ authorizedScopes: scopes.filter((scope) => sdk.hasScope(scope)), message: '' })
         await watchParticipants()
         checkBinding()
         success = true
-        return { status: 'logged_in', session: { ...session, platform: snapshot() } }
+        api.finishKookLogin(state)
+        const { gameToken: _gameToken, ...publicSession } = session
+        return { status: 'logged_in', session: { ...publicSession, platform: snapshot() } }
       } finally {
         transaction = null
         if (state && !success) await api.cancelKookLogin(state).catch(() => undefined)
@@ -314,6 +324,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
       offConnection?.()
       for (const subscription of subscriptions) void subscription.unsubscribe().catch(() => undefined)
       client?.destroy()
+      setGameToken(null)
       listeners.clear()
     },
   }

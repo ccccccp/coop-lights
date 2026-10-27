@@ -9,6 +9,8 @@ import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
 
+import { resolveOpenSsl } from './tls'
+
 import { createApp } from '../apps/server/src/app'
 import { getConfig, projectRoot } from '../apps/server/src/config'
 import { PostgresRepository } from '../apps/server/src/storage'
@@ -21,8 +23,7 @@ await mkdir(output, { recursive: true })
 const key = resolve(output, 'localhost.key')
 const cert = resolve(output, 'localhost.crt')
 if (!existsSync(key) || !existsSync(cert)) {
-  const bundled = 'C:/Program Files/Git/usr/bin/openssl.exe'
-  const openssl = process.env.OPENSSL_BIN || (existsSync(bundled) ? bundled : 'openssl')
+  const openssl = resolveOpenSsl()
   execFileSync(
     openssl,
     [
@@ -75,6 +76,8 @@ const { app } = await createApp(
     mode: 'kook',
     devFaults: false,
     port: 5191,
+    // SDK 测试入口负责 HTTPS，内部上游保持 loopback HTTP。
+    tls: undefined,
     allowedOrigins: ['https://127.0.0.1:5190'],
     kook: oauth.config,
   },

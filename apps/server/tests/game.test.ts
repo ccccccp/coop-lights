@@ -33,6 +33,7 @@ async function fixture(overrides: Partial<Config> = {}) {
   const config: Config = {
     ...baseConfig,
     mode: 'standalone',
+    tls: undefined,
     host: '127.0.0.1',
     port: 0,
     maxPlayers: 4,

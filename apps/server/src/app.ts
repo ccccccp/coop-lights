@@ -39,6 +39,7 @@ function publicUser(u: GameUser) {
 export async function createApp(config: Config, repo: Repository, staticRoot?: string) {
   const app = Fastify({
     bodyLimit: 8192,
+    ...(config.tls ? { https: config.tls } : {}),
     logger: {
       level: 'warn',
       redact: ['req.headers.cookie', 'req.headers.authorization'],
@@ -48,6 +49,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   const clients = new Map<string, { ws: WebSocket; id: string; session: Session; alive: boolean }>()
   const tickets = new Map<string, { session: Session; expiresAt: number }>()
   const transactions = new LoginTransactions()
+  const nonceSchema = z.string().regex(/^[a-f0-9]{64}$/)
   const cookieOptions = {
     path: '/',
     httpOnly: true,
@@ -58,11 +60,25 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   function send(ws: WebSocket, event: ServerEvent) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event))
   }
+  function requestToken(req: FastifyRequest) {
+    if (config.mode === 'kook' && req.headers.authorization !== undefined) {
+      const match = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization)
+      check(match, 'UNAUTHENTICATED', '游戏登录凭证无效，请重新登录', 401)
+      return match[1]
+    }
+    return req.cookies.lights_session
+  }
+  function loginBinding(req: FastifyRequest, clientNonce?: string) {
+    // 两种绑定使用不同命名空间；错误或缺失的 nonce 不能降级为 Cookie 身份。
+    return hash(
+      clientNonce ? `nonce:${req.headers.origin ?? ''}:${clientNonce}` : `cookie:${req.cookies.lights_oauth ?? ''}`
+    )
+  }
   const rooms = new Rooms(repo, config.maxPlayers, config.graceMs, (id, event) => {
     for (const [uid, c] of clients) if (rooms.forUser(uid)?.id === id) send(c.ws, event)
   })
   async function auth(req: FastifyRequest) {
-    const token = req.cookies.lights_session
+    const token = requestToken(req)
     const session = token ? await repo.getSession(hash(token)) : null
     check(session, 'UNAUTHENTICATED', '请先进入游戏', 401)
     const user = await repo.getUser(session.userId)
@@ -81,6 +97,9 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     const origin = req.headers.origin
     if (req.method !== 'GET' && req.method !== 'HEAD')
       check(origin && config.allowedOrigins.includes(origin), 'ORIGIN_DENIED', '请求来源不允许', 403)
+  })
+  app.addHook('onSend', async (req, reply) => {
+    if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store')
   })
   app.setErrorHandler((error, req, reply) => {
     if (error instanceof GameError)
@@ -125,19 +144,30 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   }
   app.post('/api/kook/login/start', async (req, reply) => {
     requireKook()
+    const input = z
+      .object({ clientNonce: nonceSchema.optional() })
+      .strict()
+      .parse(req.body ?? {})
     const existing = req.cookies.lights_oauth
     const browser = existing && /^[a-f0-9]{64}$/.test(existing) ? existing : randomBytes(32).toString('hex')
-    const state = transactions.begin(hash(browser))
+    const state = transactions.begin(
+      input.clientNonce ? loginBinding(req, input.clientNonce) : hash(`cookie:${browser}`)
+    )
     reply.header('Cache-Control', 'no-store').setCookie('lights_oauth', browser, { ...cookieOptions, maxAge: 300 })
     return { state }
   })
   app.post('/api/kook/login/complete', async (req, reply) => {
     requireKook()
+    const oldToken = requestToken(req)
     const input = z
-      .object({ state: z.string().regex(/^[a-f0-9]{64}$/), code: z.string().min(1).max(4096).regex(/^\S+$/) })
+      .object({
+        state: nonceSchema,
+        code: z.string().min(1).max(4096).regex(/^\S+$/),
+        clientNonce: nonceSchema.optional(),
+      })
       .strict()
       .parse(req.body)
-    const transaction = transactions.consume(input.state, hash(req.cookies.lights_oauth ?? ''))
+    const transaction = transactions.consume(input.state, loginBinding(req, input.clientNonce))
     const grant = await exchangeKookCode(config.kook, input.code)
     transactions.assertActive(transaction)
     const user = await repo.upsertUser(grant.identity)
@@ -156,7 +186,6 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       await repo.deleteSession(session.hash)
       transactions.assertActive(transaction)
     }
-    const oldToken = req.cookies.lights_session
     const old = oldToken ? await repo.getSession(hash(oldToken)) : null
     if (old) {
       if (old.userId !== user.id) await revokeSession(old.hash)
@@ -171,14 +200,20 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       ...cookieOptions,
       maxAge: Math.max(1, Math.floor((session.expiresAt - Date.now()) / 1000)),
     })
-    return { user: publicUser(user), room: rooms.forUser(user.id), platform: platformContext(config.mode) }
+    // 这是游戏自己的短期会话，不是 KOOK OAuth token；用于浏览器阻止第三方 Cookie 的情况。
+    return {
+      user: publicUser(user),
+      room: rooms.forUser(user.id),
+      platform: platformContext(config.mode),
+      ...(input.clientNonce ? { gameToken: token } : {}),
+    }
   })
   app.post('/api/kook/login/cancel', async (req) => {
-    const { state } = z
-      .object({ state: z.string().regex(/^[a-f0-9]{64}$/) })
+    const { state, clientNonce } = z
+      .object({ state: nonceSchema, clientNonce: nonceSchema.optional() })
       .strict()
       .parse(req.body)
-    for (const session of transactions.cancel(hash(req.cookies.lights_oauth ?? ''), state)) await revokeSession(session)
+    for (const session of transactions.cancel(loginBinding(req, clientNonce), state)) await revokeSession(session)
     return { ok: true }
   })
   app.post('/api/dev/session', async (req, reply) => {
@@ -229,8 +264,9 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     }
   })
   app.post('/api/logout', async (req, reply) => {
-    if (req.cookies.lights_session) await revokeSession(hash(req.cookies.lights_session))
-    for (const session of transactions.cancel(hash(req.cookies.lights_oauth ?? ''))) await revokeSession(session)
+    const token = requestToken(req)
+    if (token) await revokeSession(hash(token))
+    for (const session of transactions.cancel(loginBinding(req))) await revokeSession(session)
     reply.clearCookie('lights_session', cookieOptions)
     reply.clearCookie('lights_oauth', cookieOptions)
     return { ok: true }

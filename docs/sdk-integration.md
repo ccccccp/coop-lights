@@ -48,17 +48,19 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 端点不预填猜测值。当前交换适配器发送 `application/x-www-form-urlencoded` 的 `grant_type=authorization_code`、`client_id`、`client_secret`、`redirect_uri`、`code`，要求 token 响应含 `access_token`、Bearer `token_type`、秒数 `expires_in`；然后用 Bearer token GET 用户信息。支持直接 JSON 对象或 `{ code: 0, data: ... }` 包装。实际平台若采用其他认证方式或响应结构，需要调整 `apps/server/src/platform.ts` 的交换适配器。
 
-生产端点要求 HTTPS；仅允许 loopback HTTP 用于本地模拟。游戏页面也需要 HTTPS，以使用跨站 iframe 的 `Secure; HttpOnly; SameSite=None; Partitioned` 会话 cookie。部署时保持游戏 API 与游戏页面同源，并为 `/ws` 转发 WebSocket Upgrade。真实 KOOK Web/桌面端的 cookie 策略仍需实际联调。
+生产端点要求 HTTPS；仅允许 loopback HTTP 用于本地模拟。游戏页面需要 HTTPS，保留跨站 iframe 的 `Secure; HttpOnly; SameSite=None; Partitioned` 会话 Cookie，并兼容完全禁用第三方 Cookie 的环境。部署时保持游戏 API 与游戏页面同源，并为 `/ws` 转发 WebSocket Upgrade。`WEB_HTTPS=true` 启用 Vite 原生 HTTPS；`SERVER_HTTPS=true` 启用游戏后端原生 HTTPS，二者使用 `GAME_TLS_CERT/GAME_TLS_KEY`。静态生产构建不读取证书；HTTPS 代理保持证书与主机名校验。
 
 ## 授权链路与游戏会话
 
-1. 游戏调用 `/api/kook/login/start`，后端签发随机 state，并用 HttpOnly cookie 绑定当前浏览器。
+1. 游戏生成仅驻留内存的随机 `clientNonce`，调用原有 `/api/kook/login/start`；后端签发随机 state，以 nonce 哈希和请求来源绑定本次事务。未传 nonce 的旧调用继续使用 HttpOnly Cookie 绑定。
 2. 用户操作触发 `sdk.session.get({ state, scopes })`；取消作为正常结果返回。
-3. 游戏只提交 `code` 和 `state` 到 `/api/kook/login/complete`。
-4. 后端一次性消费 state，向配置的 OAuth 服务交换 token、读取用户身份，并创建自己的游戏会话。token 和应用密钥不会返回浏览器。
+3. 游戏提交 `code`、`state` 和本次 `clientNonce` 到原有 `/api/kook/login/complete`，不提交用户身份或实例身份。
+4. 后端一次性消费 state，向配置的 OAuth 服务交换 token、读取用户身份，并创建自己的游戏会话。KOOK token 和应用密钥不会返回浏览器；nonce 调用额外取得游戏自己的随机 `gameToken`，仅驻留前端模块内存，用作 API 的 Bearer 凭证，不写入存储或页面展示状态。Cookie 调用的响应保持兼容。
 5. 游戏继续使用已有的房间 HTTP API、一次性 WebSocket 票据及服务端点灯协议。
 
 事务有效期为 5 分钟，旧事务、跨浏览器 state、重复使用、伪造身份字段和取消后到达的响应均被拒绝。追加权限会重新验证身份并更新游戏会话，WebSocket 随之重新认证。
+
+`/api/kook/login/cancel` 同样支持 nonce，能够在 Cookie 缺失时取消在途换码或注销它已创建的会话。Bearer 无效时不会退回 Cookie 冒用另一会话；WebSocket 仍只使用原有一次性票据。退出登录、撤销、关闭或登录响应迟到时清理游戏自己的会话；页面刷新后重新由用户授权。数据库中的应用命名空间、身份字段、会话期限和现有三个登录路由均保留。
 
 `ready().instanceId` 只用于展示，不能作为游戏后端已验证身份或实例成员资格的凭证。当前房间由游戏后端自己管理，通过邀请房间号加入；没有伪造平台实例校验接口。授权失效、实例关闭时，游戏清除本地登录和房间状态，并注销后端会话。
 

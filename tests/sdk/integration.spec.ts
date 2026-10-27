@@ -1,4 +1,4 @@
-import { type Page, expect, test } from '@playwright/test'
+import { type Page, expect, request, test } from '@playwright/test'
 
 import { solve } from '../../apps/server/src/board'
 
@@ -193,4 +193,62 @@ test('game rejects bootstrap from itself, mismatched host origin and malformed b
   )
   await expect(game(page).getByTestId('kook-login')).toBeEnabled()
   await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
+})
+
+test('Cookie 全部不可用时仍可完成原授权协议、协作通关、撤销和退出登录', async ({ browser }) => {
+  const context = await browser.newContext({ ignoreHTTPSErrors: true })
+  const upstream = await request.newContext({ ignoreHTTPSErrors: true })
+  let bearerRequests = 0
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  try {
+    await context.route('**/*', async (route) => {
+      if (!route.request().url().startsWith('https://127.0.0.1:5190/api/')) return route.continue()
+      const headers = { ...route.request().headers() }
+      expect(Boolean(headers.cookie)).toBe(false)
+      if (headers.authorization?.startsWith('Bearer ')) bearerRequests++
+      // 独立请求上下文避免 route.fetch 将响应 Cookie 写入被测浏览器。
+      const response = await upstream.fetch(route.request().url(), {
+        method: route.request().method(),
+        headers: { ...headers, cookie: '' },
+        data: route.request().postDataBuffer() ?? undefined,
+      })
+      const responseHeaders = { ...response.headers() }
+      delete responseHeaders['set-cookie']
+      await route.fulfill({ status: response.status(), body: await response.body(), headers: responseHeaders })
+    })
+    await open(page)
+    await login(page)
+    await game(page).getByTestId('create-room').click()
+    await expect(game(page).getByTestId('active-room-code')).toBeVisible()
+    await game(page).getByRole('button', { name: '我准备好了', exact: true }).click()
+    await game(page).getByTestId('start-round').click()
+    await expect(game(page).getByTestId('board')).not.toHaveClass(/inactive/)
+    const frame = page.frames().find((value) => value.name() === 'game')!
+    const board = await frame
+      .locator('[data-testid^="cell-"]')
+      .evaluateAll((cells) => cells.map((cell) => cell.classList.contains('on')))
+    let moves = 0
+    for (const cell of solve(board)) {
+      await game(page).getByTestId(`cell-${cell}`).click()
+      // 等待真实 WebSocket 应答后再进行下一次操作。
+      await expect(
+        game(page).locator('.session-stats > div').filter({ hasText: '操作次数' }).locator('strong')
+      ).toHaveText(String(++moves))
+    }
+    await expect(game(page).getByTestId('finished')).toContainText('记录已保存')
+    const gameCookies = (await context.cookies()).filter((cookie) => cookie.domain === '127.0.0.1')
+    expect(gameCookies.length).toBe(0)
+    expect(bearerRequests).toBeGreaterThan(1)
+    await game(page).getByRole('button', { name: '退出登录', exact: true }).click()
+    await expect(game(page).getByTestId('kook-login')).toBeEnabled()
+    await login(page)
+    await page.getByRole('button', { name: '撤销授权', exact: true }).click()
+    await expect(game(page).getByTestId('kook-login')).toBeDisabled()
+    expect(errors).toEqual([])
+  } finally {
+    await context.close()
+    await upstream.dispose()
+  }
 })

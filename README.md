@@ -28,6 +28,14 @@ pnpm db:setup
 
 已有数据库时，在 `.env` 配置专用 `DATABASE_URL` 并执行 `pnpm db:migrate`。原生 PostgreSQL 的 `db:setup` / `db:stop` 入口也保留；请先配置实际 `PG_BIN` 路径，勿与 Docker 初始化方式混用。
 
+## 原生 HTTPS 联调
+
+在游戏根目录 `.env` 配置 `WEB_HTTPS=true`、`GAME_TLS_CERT` 和 `GAME_TLS_KEY`，执行 `pnpm dev` 即可使用 `https://localhost:5178/`。Vite 同源代理 `/api` 与 `/ws` 到游戏后端；默认 `SERVER_HTTPS=false`，后端仅监听 loopback HTTP。
+
+构建后需要后端直接提供 HTTPS 时，将 `WEB_HTTPS=false`、`SERVER_HTTPS=true`，然后运行 `pnpm build`、`pnpm start`。证书路径可以是绝对路径或相对游戏根目录的路径。HTTPS 上游代理使用配置证书进行校验，不关闭 TLS 校验。
+
+Cookie 受限时，游戏沿用现有登录协议，以随机 nonce 绑定登录事务，并使用仅驻留内存的游戏 Bearer 会话。KOOK 应用凭证、OAuth token 和数据库身份映射保持现有实现。真实 Web／PC 的打开—游玩—关闭验收由使用方执行，步骤见 [手动验证清单](docs/web-pc-verification.md)。
+
 ## SDK 自测
 
 ```powershell
@@ -74,6 +82,7 @@ pnpm test:sdk
 - `check`：类型检查、服务端协议与 OAuth 测试、生产构建。
 - `test:e2e`：独立模式的双人协作、刷新恢复、结算和退出。
 - `test:sdk`：真实 SDK + 模拟宿主，覆盖启动消息重投、无 OAuth 加载、授权、权限、分页、邀请、双人通关、恢复、撤销及关闭后停止探测。
+- HTTPS 和 Cookie 兼容回归：`pnpm check` 覆盖原生 HTTPS 监听及 nonce／Bearer 绑定，`pnpm test:sdk` 额外在请求／响应均无 Cookie 的条件下验证授权、游玩和注销；不替代真实 KOOK Web／PC 验收。
 - 单元测试使用 `lights_test_*` 临时 schema；SDK 浏览器测试使用 `lights_sdk_*` 临时 schema，并在正常退出时清理。强制终止进程可能留下测试 schema。
 - 独立模式浏览器测试使用游戏数据库的默认 schema，产生自测账号与通关记录。截图及失败追踪在 `test-results/`；SDK 截图及失败追踪在 `.sdk-test/results/`。
 

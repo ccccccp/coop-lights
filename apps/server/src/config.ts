@@ -5,11 +5,16 @@ import { fileURLToPath } from 'node:url'
 import { config as loadEnv } from 'dotenv'
 import { z } from 'zod'
 
+import { readGameTls } from '../../../scripts/tls'
+
 export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 loadEnv({ path: resolve(projectRoot, '.env'), quiet: true })
 const envSchema = z.object({
   APP_MODE: z.enum(['standalone', 'kook']).default('standalone'),
   SERVER_HOST: z.string().default('127.0.0.1'),
+  SERVER_HTTPS: z.enum(['true', 'false']).default('false'),
+  GAME_TLS_CERT: z.string().default(''),
+  GAME_TLS_KEY: z.string().default(''),
   SERVER_PORT: z.coerce.number().int().min(1).max(65535).default(5188),
   GAME_MAX_PLAYERS: z.coerce.number().int().min(1).max(4).default(4),
   GAME_RECONNECT_GRACE_MS: z.coerce.number().int().min(100).default(60000),
@@ -43,6 +48,7 @@ export function getConfig() {
     devFaults: e.ENABLE_DEV_FAULTS === 'true' && e.APP_MODE === 'standalone' && process.env.NODE_ENV !== 'production',
     allowedOrigins: e.ALLOWED_GAME_ORIGINS.split(',').map((x) => new URL(x.trim()).origin),
     databaseUrl,
+    tls: readGameTls(e.SERVER_HTTPS === 'true', e.GAME_TLS_CERT, e.GAME_TLS_KEY, projectRoot),
     kook: {
       clientId: e.KOOK_CLIENT_ID,
       clientSecret: e.KOOK_CLIENT_SECRET,

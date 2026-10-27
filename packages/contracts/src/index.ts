@@ -80,6 +80,8 @@ export interface SessionResponse {
   user: GameUser
   room: RoomSnapshot | null
   platform: PlatformContext
+  /** 游戏自己的短期会话；前端仅驻留内存，不能当作 KOOK OAuth token。 */
+  gameToken?: string
 }
 export type ServerEvent =
   | { type: 'connected'; protocolVersion: number; room: RoomSnapshot | null }
