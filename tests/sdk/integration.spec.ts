@@ -2,6 +2,8 @@ import { type Page, expect, test } from '@playwright/test'
 
 import { solve } from '../../apps/server/src/board'
 
+type FixtureWindow = Window & { sdkFixture: { loaded(): number; calls: string[] } }
+
 function game(page: Page) {
   return page.frameLocator('#game')
 }
@@ -18,10 +20,10 @@ test('real SDK starts before login; cancellation, optional scopes, paging and re
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await open(page)
-  await expect.poll(() => page.evaluate(() => (window as any).sdkFixture.loaded())).toBe(1)
+  await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
   expect(
     await page.evaluate(
-      () => (window as any).sdkFixture.calls.filter((value: string) => value === 'session.get').length
+      () => (window as FixtureWindow).sdkFixture.calls.filter((value) => value === 'session.get').length
     )
   ).toBe(0)
   await page.getByRole('button', { name: '取消下次授权' }).click()
@@ -115,4 +117,80 @@ test('two SDK players exchange code, invite, cooperate and recover the scoped co
     await aContext.close()
     await bContext.close()
   }
+})
+
+test('KOOK core lifecycle requests missed bootstrap, loads without OAuth and stops after host exit', async ({
+  page,
+}) => {
+  await page.clock.install()
+  await page.route('**/api/health', async (route) => {
+    const response = await route.fetch()
+    // 模拟 iframe load 已投递、游戏尚在等 health 的真实启动顺序。
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await route.fulfill({ response })
+  })
+  await page.goto('https://localhost:5190/?core')
+  await expect(game(page).getByText('当前 KOOK 宿主尚未开放账号授权，请等待平台开放后登录。')).toBeVisible()
+  await expect(game(page).getByTestId('kook-login')).toBeDisabled()
+  await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
+  function fixture() {
+    return page.evaluate(() => {
+      const value = (
+        window as unknown as { sdkFixture: { bootstrapRequests(): number; probes(): number; calls: string[] } }
+      ).sdkFixture
+      return { requests: value.bootstrapRequests(), probes: value.probes(), calls: value.calls }
+    })
+  }
+  expect((await fixture()).requests).toBeGreaterThan(0)
+  expect((await fixture()).calls).not.toContain('session.get')
+  await page.clock.runFor(15000)
+  await expect.poll(async () => (await fixture()).probes).toBeGreaterThan(0)
+  await page.getByRole('button', { name: '结束实例', exact: true }).click()
+  await expect(game(page).getByTestId('kook-login')).toBeDisabled()
+  await expect(game(page).getByRole('status')).toContainText('请从宿主重新打开')
+  const stopped = (await fixture()).probes
+  await page.clock.runFor(30000)
+  expect((await fixture()).probes).toBe(stopped)
+})
+
+test('game rejects bootstrap from itself, mismatched host origin and malformed binding', async ({ page }) => {
+  await page.goto('https://localhost:5190/?defer-bootstrap')
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as unknown as { sdkFixture: { bootstrapRequests(): number } }).sdkFixture.bootstrapRequests()
+      )
+    )
+    .toBeGreaterThan(0)
+  const frame = page.frames().find((value) => value.name() === 'game')!
+  await frame.evaluate(() =>
+    window.postMessage(
+      {
+        type: 'KOOK_MINI_GAME_BOOTSTRAP',
+        bootstrap: { hostOrigin: 'https://localhost:5190', sessionId: 'forged', generation: 1 },
+      },
+      location.origin
+    )
+  )
+  await page.evaluate(() => {
+    const target = document.querySelector<HTMLIFrameElement>('#game')!.contentWindow!
+    target.postMessage(
+      {
+        type: 'KOOK_MINI_GAME_BOOTSTRAP',
+        bootstrap: { hostOrigin: 'https://untrusted.example', sessionId: 'forged', generation: 1 },
+      },
+      'https://127.0.0.1:5190'
+    )
+    target.postMessage(
+      { type: 'KOOK_MINI_GAME_BOOTSTRAP', bootstrap: { hostOrigin: location.origin, sessionId: '', generation: -1 } },
+      'https://127.0.0.1:5190'
+    )
+  })
+  await page.waitForTimeout(100)
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.calls)).not.toContain('ready')
+  await page.evaluate(() =>
+    (window as unknown as { sdkFixture: { resumeBootstrap(): void } }).sdkFixture.resumeBootstrap()
+  )
+  await expect(game(page).getByTestId('kook-login')).toBeEnabled()
+  await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
 })

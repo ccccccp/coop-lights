@@ -2,30 +2,36 @@
 
 React + TypeScript + Node.js 的 1～4 人协作点灯游戏，使用 PostgreSQL 保存玩家、登录会话和通关记录。
 
+本独立项目同步维护旁边 `../kook-minigame-sdk/examples/coop-lights` 的游戏实现，SDK 运行库使用 npmjs 已发布包。
+
+SDK 固定使用 npmjs 已发布的 `0.1.0-alpha.1`，采用 `createKookClient` 具名导入。
+
 已接入 KOOK 小游戏 SDK，支持登录授权、邀请、平台数据调试、连接恢复与授权撤销。当前可用本地模拟宿主完成自测；真实 KOOK 环境需要补齐应用配置并联调。配置和接入边界见 [SDK 接入说明](docs/sdk-integration.md)。
 
 ## 本地准备
 
-需要 Node.js 22.12+、pnpm 10、Docker Desktop（或已有专用 PostgreSQL）、本机 Chrome。模拟宿主生成 HTTPS 证书还需要 OpenSSL，Windows 默认使用 Git for Windows 自带的版本，也可设置 `OPENSSL_BIN`。
+需要 Node.js 22.18+、pnpm 10.26.0、本机 PostgreSQL 17（也可选用 Docker Desktop）、本机 Chrome。模拟宿主生成 HTTPS 证书还需要 OpenSSL，Windows 默认使用 Git for Windows 自带的版本，也可设置 `OPENSSL_BIN`。
 
-开发期间使用旁边 `../kook-minigame-sdk` 工程生成的本地 SDK 发布包。首次安装或更新 SDK 后：
+游戏保留独立 pnpm workspace 和锁文件，SDK 运行库从 npmjs 安装。浏览器目标和模拟宿主开发工具仍复用旁边 `../kook-minigame-sdk/scripts` 中的脚本。首次安装时，在本项目根目录执行：
 
 ```powershell
-# 在 kook-minigame-sdk 目录生成 SDK 包
-pnpm --dir ../kook-minigame-sdk release:pack
-
-# 回到 coop-lights 目录安装并启动专用数据库
-pnpm install
-pnpm db:docker
+pnpm install --frozen-lockfile
+$env:PG_BIN = 'D:/Program Files/PostgreSQL/17/bin'
+pnpm db:setup
 ```
 
+`PG_BIN` 请改成本机 PostgreSQL 的实际安装目录。`db:setup` 启动本项目原生 PostgreSQL，凭证和数据保存在忽略提交的 `.local/`、`.postgres/`；已有配置会继续复用。需要 Docker 时可改用 `pnpm db:docker`。
+
 `db:docker` 创建名为 `coop-lights-sdk-postgres` 的独立 PostgreSQL 17 容器，端口为 `127.0.0.1:55432`，使用 `coop-lights-sdk-pgdata` 数据卷。随机凭证保存到忽略提交的 `.local/database.json`。重复执行会启动原容器并执行幂等迁移，停止使用 `pnpm db:docker:stop`，保留数据。
+
+本机已有的 `.env`、数据库配置和证书沿用当前项目设置。勿提交本地数据库凭证、`.env` 或证书。
 
 已有数据库时，在 `.env` 配置专用 `DATABASE_URL` 并执行 `pnpm db:migrate`。原生 PostgreSQL 的 `db:setup` / `db:stop` 入口也保留；请先配置实际 `PG_BIN` 路径，勿与 Docker 初始化方式混用。
 
 ## SDK 自测
 
 ```powershell
+$env:VITE_KOOK_HOST_ORIGINS = 'https://localhost:5190'
 pnpm dev:sdk
 ```
 
@@ -39,7 +45,9 @@ pnpm dev:sdk
 4. 宿主工具栏可模拟取消授权、撤销授权、断线恢复、参与者变化和实例关闭。
 5. 游戏里的「开发与平台调试面板」可追加权限，读取好友、频道成员、参与者和官方服务器信息。
 
-页面明确标注模拟宿主、模拟账号和模拟数据。SDK 使用真实发布包，授权码经游戏后端交换；本地模拟成功不代表真实平台验收完成。
+页面明确标注模拟宿主、模拟账号和模拟数据。SDK 使用真实构建产物，授权码经游戏后端交换；本地模拟成功不代表真实平台验收完成。
+
+SDK 运行库由本项目的 npm 依赖版本和锁文件确定；更新依赖后重新构建游戏。`pnpm dev:sdk` 使用当前安装的 npm 包。
 
 ## 独立游戏模式
 
@@ -65,7 +73,7 @@ pnpm test:sdk
 
 - `check`：类型检查、服务端协议与 OAuth 测试、生产构建。
 - `test:e2e`：独立模式的双人协作、刷新恢复、结算和退出。
-- `test:sdk`：真实 SDK + 模拟宿主，覆盖授权、权限、分页、邀请、双人通关、恢复、撤销和关闭。
+- `test:sdk`：真实 SDK + 模拟宿主，覆盖启动消息重投、无 OAuth 加载、授权、权限、分页、邀请、双人通关、恢复、撤销及关闭后停止探测。
 - 单元测试使用 `lights_test_*` 临时 schema；SDK 浏览器测试使用 `lights_sdk_*` 临时 schema，并在正常退出时清理。强制终止进程可能留下测试 schema。
 - 独立模式浏览器测试使用游戏数据库的默认 schema，产生自测账号与通关记录。截图及失败追踪在 `test-results/`；SDK 截图及失败追踪在 `.sdk-test/results/`。
 

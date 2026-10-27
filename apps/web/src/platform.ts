@@ -1,11 +1,5 @@
 import { type KookClient, type KookSubscription, type Scope, createKookClient } from '@kookapp/kook-minigame-sdk'
-import type {
-  PlatformAdapter,
-  PlatformContext,
-  PlatformEvent,
-  PlatformResource,
-  SessionResponse,
-} from '@lights/contracts'
+import type { PlatformAdapter, PlatformContext, PlatformEvent, PlatformResource } from '@lights/contracts'
 
 import { ApiError, api } from './api'
 import { waitForBootstrap } from './bootstrap'

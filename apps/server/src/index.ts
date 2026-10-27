@@ -1,7 +1,8 @@
 import { resolve } from 'node:path'
+
+import { createApp } from './app'
 import { getConfig, projectRoot } from './config'
 import { PostgresRepository } from './storage'
-import { createApp } from './app'
 
 const config = getConfig()
 const repo = await new PostgresRepository(config.databaseUrl).init()

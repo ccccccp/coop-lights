@@ -47,13 +47,14 @@ if (!existsSync(key) || !existsSync(cert)) {
 }
 // Dev-only fixture uses the same audited scoped bridge as the local SDK. It never enters the game bundle.
 const { scopedBridgePlugin } = await import('../../kook-minigame-sdk/scripts/bridge-entry.mjs')
+const { browserTargets } = await import('../../kook-minigame-sdk/scripts/browser-targets.mjs')
 await build({
   absWorkingDir: projectRoot,
   entryPoints: ['tests/support/host.ts'],
   bundle: true,
   format: 'esm',
   platform: 'browser',
-  target: 'es2020',
+  target: [...browserTargets],
   outfile: resolve(output, 'host.js'),
   plugins: [await scopedBridgePlugin()],
 })
@@ -150,15 +151,9 @@ const server = createServer({ key: await readFile(key), cert: await readFile(cer
         return
       }
       const html = await readFile(resolve(projectRoot, 'apps/web/dist/index.html'), 'utf8')
-      const data = JSON.stringify(binding).replaceAll('<', '\\u003c')
       res.setHeader('Content-Type', 'text/html; charset=utf-8')
       res.setHeader('Cache-Control', 'no-store')
-      res.end(
-        html.replace(
-          '</head>',
-          `<script>window.addEventListener('DOMContentLoaded', () => window.startCoopLights(${data}), { once: true })</script></head>`
-        )
-      )
+      res.end(html)
       return
     }
     const upstream = request(

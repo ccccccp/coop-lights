@@ -26,6 +26,9 @@ let lifecycle = { revision: 1, status: 'active', visibility: 'visible', presenta
 let participantsRevision = 1
 let cancelNext = false
 let loaded = 0
+let bootstrapEnabled = !params.has('defer-bootstrap')
+let bootstrapRequests = 0
+let probes = 0
 const calls: string[] = []
 const authObservers = new Set<(value: unknown) => void>()
 const lifecycleObservers = new Set<(value: unknown) => void>()
@@ -61,7 +64,7 @@ function register() {
         platform: 'web',
         capabilities: supported,
         permissionVersion: 'fixture-v1',
-        availableScopes: scopes,
+        availableScopes: params.has('core') ? [] : scopes,
         context: {
           contextType: 'voice_channel',
           launchSource: roomId ? 'invite' : 'appLauncher',
@@ -161,6 +164,7 @@ function register() {
     })
   }
   server.handleSubscription('miniGame.v1.health.probe', (input, _peer, notify) => {
+    probes++
     const probeId = (input as { callId: string }).callId
     notify(
       success({
@@ -173,6 +177,22 @@ function register() {
     return () => clearTimeout(timer)
   })
 }
+
+function sendBootstrap() {
+  if (!bootstrapEnabled) return
+  frame.contentWindow?.postMessage({ type: 'KOOK_MINI_GAME_BOOTSTRAP', bootstrap }, gameOrigin)
+}
+frame.addEventListener('load', sendBootstrap)
+window.addEventListener('message', (event) => {
+  if (
+    event.source === frame.contentWindow &&
+    event.origin === gameOrigin &&
+    event.data?.type === 'KOOK_MINI_GAME_BOOTSTRAP_REQUEST'
+  ) {
+    bootstrapRequests++
+    sendBootstrap()
+  }
+})
 
 async function launch() {
   const response = await fetch('/mock/launch', {
@@ -205,6 +225,12 @@ Object.assign(window, {
   sdkFixture: {
     calls,
     loaded: () => loaded,
+    bootstrapRequests: () => bootstrapRequests,
+    probes: () => probes,
+    resumeBootstrap() {
+      bootstrapEnabled = true
+      sendBootstrap()
+    },
   },
 })
 void launch()

@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import type { IncomingMessage } from 'node:http'
 import { resolve } from 'node:path'
+import type { Duplex } from 'node:stream'
 
 import Fastify, { type FastifyRequest } from 'fastify'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -266,7 +268,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     return { ticket }
   })
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192 })
-  function upgrade(req: import('node:http').IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) {
+  function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
     if (req.url !== '/ws' || !req.headers.origin || !config.allowedOrigins.includes(req.headers.origin)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
       return

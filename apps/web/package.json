@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@kookapp/kook-minigame-sdk": "file:../../../kook-minigame-sdk/.artifacts/kookapp-kook-minigame-sdk-0.1.0-alpha.0.tgz",
+    "@kookapp/kook-minigame-sdk": "0.1.0-alpha.1",
     "@lights/contracts": "workspace:*",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

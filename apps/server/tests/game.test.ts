@@ -1,14 +1,17 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+
 import pg from 'pg'
-import { randomUUID } from 'node:crypto'
+import { afterEach, describe, expect, test } from 'vitest'
 import { WebSocket } from 'ws'
+
+import type { Command, ServerEvent } from '@lights/contracts'
+
 import { createApp } from '../src/app'
-import { PostgresRepository } from '../src/storage'
 import { generateBoard, solve, toggle } from '../src/board'
-import { getConfig, projectRoot, type Config } from '../src/config'
-import type { Command, RoomSnapshot, ServerEvent } from '@lights/contracts'
+import { type Config, getConfig, projectRoot } from '../src/config'
+import { PostgresRepository } from '../src/storage'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -80,12 +83,11 @@ async function fixture(overrides: Partial<Config> = {}) {
       events,
       command: async (c: Command) => {
         ws.send(JSON.stringify(c))
-        await waitFor(() =>
-          events.some((e) => e.type === 'command.result' && e.actionId === c.actionId),
-        )
-        return events.find(
-          (e) => e.type === 'command.result' && e.actionId === c.actionId,
-        ) as Extract<ServerEvent, { type: 'command.result' }>
+        await waitFor(() => events.some((e) => e.type === 'command.result' && e.actionId === c.actionId))
+        return events.find((e) => e.type === 'command.result' && e.actionId === c.actionId) as Extract<
+          ServerEvent,
+          { type: 'command.result' }
+        >
       },
     }
   }
@@ -98,8 +100,9 @@ async function waitFor(fn: () => boolean, timeout = 3000) {
     await new Promise((r) => setTimeout(r, 10))
   }
 }
-const cmd = (roomId: string, fields: Record<string, unknown>) =>
-  ({ roomId, actionId: randomUUID(), ...fields }) as Command
+function cmd(roomId: string, fields: Record<string, unknown>): Command {
+  return { roomId, actionId: randomUUID(), ...fields } as Command
+}
 async function startedGame() {
   const f = await fixture(),
     a = await f.login('阿青'),
@@ -137,9 +140,7 @@ describe('真实 HTTP 与 WebSocket', () => {
   test('未登录、错误来源、真实平台未配置时不放行本地身份', async () => {
     const f = await fixture()
     expect((await f.http('/api/session')).status).toBe(401)
-    expect(
-      (await f.http('/api/dev/session', '', { nickname: '测试' }, 'http://evil.test')).status,
-    ).toBe(403)
+    expect((await f.http('/api/dev/session', '', { nickname: '测试' }, 'http://evil.test')).status).toBe(403)
     expect((await f.http('/api/dev/session', '', { nickname: '   ' })).status).toBe(400)
     const platform = await fixture({ mode: 'kook' })
     expect((await platform.login('不得伪造')).data.code).toBe('PLATFORM_NOT_CONFIGURED')
@@ -155,7 +156,7 @@ describe('真实 HTTP 与 WebSocket', () => {
           roundId: s.round!.id,
           expectedVersion: s.version,
           cell: cells[i],
-        }),
+        })
       )
       expect(result.ok).toBe(true)
     }
@@ -170,7 +171,7 @@ describe('真实 HTTP 与 WebSocket', () => {
         roundId: s.round!.id,
         expectedVersion: s.version,
         cell: 0,
-      }),
+      })
     )
     expect(blocked.error?.code).toBe('ROUND_NOT_ACTIVE')
     const reload = await new PostgresRepository(getConfig().databaseUrl, f.schema).init()
@@ -198,14 +199,10 @@ describe('真实 HTTP 与 WebSocket', () => {
     expect(f.rooms.snapshot(f.id)!.round!.moves).toBe(1)
     const success = results[0].ok ? first : second,
       client = results[0].ok ? f.ca : f.cb
-    const count = client.events.filter(
-      (e) => e.type === 'command.result' && e.actionId === success.actionId,
-    ).length
+    const count = client.events.filter((e) => e.type === 'command.result' && e.actionId === success.actionId).length
     client.ws.send(JSON.stringify(success))
     await waitFor(
-      () =>
-        client.events.filter((e) => e.type === 'command.result' && e.actionId === success.actionId)
-          .length > count,
+      () => client.events.filter((e) => e.type === 'command.result' && e.actionId === success.actionId).length > count
     )
     expect(f.rooms.snapshot(f.id)!.round!.moves).toBe(1)
   })
@@ -214,22 +211,17 @@ describe('真实 HTTP 与 WebSocket', () => {
       originalBoard = f.rooms.snapshot(f.id)!.round!.board
     const reconnected = await f.connect(f.a.cookie)
     await waitFor(() => f.ca.events.some((e) => e.type === 'session.replaced'))
-    expect(f.rooms.snapshot(f.id)!.players.find((p) => p.id === f.a.data.user.id)?.online).toBe(
-      true,
-    )
+    expect(f.rooms.snapshot(f.id)!.players.find((p) => p.id === f.a.data.user.id)?.online).toBe(true)
     const third = await f.login('小雨'),
       cc = await f.connect(third.cookie)
     expect((await f.http(`/api/rooms/${f.id}/join`, third.cookie, {})).status).toBe(200)
     expect(f.rooms.snapshot(f.id)!.round!.board).toEqual(originalBoard)
     reconnected.ws.close()
+    await waitFor(() => f.rooms.snapshot(f.id)!.players.find((p) => p.id === f.a.data.user.id)?.online === false)
     await waitFor(
       () =>
-        f.rooms.snapshot(f.id)!.players.find((p) => p.id === f.a.data.user.id)?.online === false,
-    )
-    await waitFor(
-      () =>
-        (f.rooms.snapshot(f.id)!.players.find((p) => p.id === f.a.data.user.id)?.reconnectUntil ??
-          Infinity) <= Date.now(),
+        (f.rooms.snapshot(f.id)!.players.find((p) => p.id === f.a.data.user.id)?.reconnectUntil ?? Infinity) <=
+        Date.now()
     )
     await f.rooms.sweep()
     expect(f.rooms.snapshot(f.id)!.hostId).toBe(f.b.data.user.id)
@@ -251,9 +243,9 @@ describe('真实 HTTP 与 WebSocket', () => {
             roundId: randomUUID(),
             expectedVersion: s.version,
             cell: 0,
-          }),
+          })
         )
-      ).error?.code,
+      ).error?.code
     ).toBe('ROUND_CHANGED')
     for (let i = 0; i < 2; i++) {
       const p = await f.login(`玩家${i}`)
@@ -271,17 +263,10 @@ describe('真实 HTTP 与 WebSocket', () => {
     const created = await f.http('/api/rooms', player.cookie, {})
     connection.ws.close()
     await waitFor(() => f.rooms.snapshot(created.data.room.id)?.players[0].online === false)
-    await waitFor(
-      () =>
-        (f.rooms.snapshot(created.data.room.id)?.players[0].reconnectUntil ?? Infinity) <=
-        Date.now(),
-    )
+    await waitFor(() => (f.rooms.snapshot(created.data.room.id)?.players[0].reconnectUntil ?? Infinity) <= Date.now())
     await f.rooms.sweep()
     const restored = await f.connect(player.cookie)
-    const event = restored.events.find((e) => e.type === 'connected') as Extract<
-      ServerEvent,
-      { type: 'connected' }
-    >
+    const event = restored.events.find((e) => e.type === 'connected') as Extract<ServerEvent, { type: 'connected' }>
     expect(event.room).toBeNull()
     expect((await f.http('/api/logout', player.cookie, {})).status).toBe(200)
     expect((await f.http('/api/logout', player.cookie, {})).status).toBe(200)

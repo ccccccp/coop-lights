@@ -1,7 +1,9 @@
 import { randomInt, randomUUID } from 'node:crypto'
+
 import type { Command, GameUser, RoomSnapshot, ServerEvent } from '@lights/contracts'
-import { generateBoard, toggle, solve } from './board'
-import { check, GameError } from './errors'
+
+import { generateBoard, solve, toggle } from './board'
+import { GameError, check } from './errors'
 import type { Repository, Settlement } from './storage'
 
 interface Room {
@@ -21,7 +23,7 @@ export class Rooms {
     private repo: Repository,
     private maxPlayers: number,
     private graceMs: number,
-    private broadcast: (id: string, event: ServerEvent) => void,
+    private broadcast: (id: string, event: ServerEvent) => void
   ) {}
   private queue<T>(id: string, job: () => Promise<T> | T): Promise<T> {
     const previous = this.tails.get(id) ?? Promise.resolve()
@@ -105,12 +107,7 @@ export class Rooms {
   join(id: string, user: GameUser, instanceId: string | null) {
     return this.queue(id, () => {
       const r = this.requireRoom(id)
-      check(
-        r.snapshot.platformInstanceId === instanceId,
-        'INSTANCE_MISMATCH',
-        '房间不属于当前平台实例',
-        403,
-      )
+      check(r.snapshot.platformInstanceId === instanceId, 'INSTANCE_MISMATCH', '房间不属于当前平台实例', 403)
       if (this.members.get(user.id) !== id) this.add(r, user)
       return this.snapshot(id)!
     })
@@ -167,8 +164,7 @@ export class Rooms {
     const expired: Array<[string, string]> = []
     for (const [id, r] of this.rooms)
       for (const p of r.snapshot.players)
-        if (!p.online && p.reconnectUntil !== null && p.reconnectUntil <= Date.now())
-          expired.push([id, p.id])
+        if (!p.online && p.reconnectUntil !== null && p.reconnectUntil <= Date.now()) expired.push([id, p.id])
     for (const [id, uid] of expired)
       await this.queue(id, async () => {
         const p = this.rooms.get(id)?.snapshot.players.find((p) => p.id === uid)
@@ -201,12 +197,7 @@ export class Rooms {
     }
     this.publish(r)
   }
-  async handle(
-    userId: string,
-    connectionId: string,
-    command: Command,
-    allowSeed: boolean,
-  ): Promise<ServerEvent> {
+  async handle(userId: string, connectionId: string, command: Command, allowSeed: boolean): Promise<ServerEvent> {
     return this.queue(command.roomId, async () => {
       let r: Room | undefined
       try {
@@ -215,7 +206,7 @@ export class Rooms {
           this.members.get(userId) === command.roomId && r.connections.get(userId) === connectionId,
           'NOT_CONNECTED',
           '你已不在当前房间连接中',
-          403,
+          403
         )
         const key = `${userId}:${command.actionId}`,
           payload = JSON.stringify(command)
@@ -237,7 +228,7 @@ export class Rooms {
           check(
             s.players.every((p) => !p.online || p.ready),
             'NOT_READY',
-            '在线成员需要先准备',
+            '在线成员需要先准备'
           )
           check(command.seed === undefined || allowSeed, 'DEV_DISABLED', '当前环境不允许指定关卡')
           const seed = command.seed ?? randomInt(0x100000000),
@@ -267,11 +258,7 @@ export class Rooms {
         } else if (command.type === 'board.toggle') {
           check(s.status === 'playing' && s.round, 'ROUND_NOT_ACTIVE', '当前没有进行中的关卡')
           check(s.round.id === command.roundId, 'ROUND_CHANGED', '关卡已更换，请使用最新棋盘')
-          check(
-            s.version === command.expectedVersion,
-            'VERSION_STALE',
-            '棋盘已更新，请在最新棋盘上操作',
-          )
+          check(s.version === command.expectedVersion, 'VERSION_STALE', '棋盘已更新，请在最新棋盘上操作')
           s.round.board = toggle(s.round.board, command.cell)
           s.round.moves++
           p.contribution++

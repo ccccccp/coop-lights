@@ -13,8 +13,7 @@ export function toggle(board: boolean[], cell: number): boolean[] {
   ]) {
     const r = row + dr,
       c = col + dc
-    if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE)
-      next[r * BOARD_SIZE + c] = !next[r * BOARD_SIZE + c]
+    if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) next[r * BOARD_SIZE + c] = !next[r * BOARD_SIZE + c]
   }
   return next
 }
@@ -42,7 +41,7 @@ export function solve(board: boolean[]): number[] {
   // 4×4 只有 65536 种按键组合，开发提示用位掩码搜索。
   const target = board.reduce((mask, lit, i) => (lit ? mask : mask | (1 << i)), 0)
   const masks = Array.from({ length: 16 }, (_, cell) =>
-    toggle(Array(16).fill(false), cell).reduce((m, on, i) => (on ? m | (1 << i) : m), 0),
+    toggle(Array(16).fill(false), cell).reduce((m, on, i) => (on ? m | (1 << i) : m), 0)
   )
   for (let combination = 0; combination < 65536; combination++) {
     let effect = 0

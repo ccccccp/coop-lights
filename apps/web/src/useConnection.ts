@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+
 import type { Command, RoomSnapshot, ServerEvent } from '@lights/contracts'
+
 import { api } from './api'
 
 export function useConnection(
   userId: string | undefined,
   onRoom: (room: RoomSnapshot | null) => void,
   onError: (text: string) => void,
-  onSaved: () => void,
+  onSaved: () => void
 ) {
   const [state, setState] = useState('未连接')
   const [generation, setGeneration] = useState(0)
@@ -21,7 +23,7 @@ export function useConnection(
         reject: (e: Error) => void
         timer: ReturnType<typeof setTimeout>
       }
-    >(),
+    >()
   )
   useEffect(() => {
     if (!userId) {
@@ -32,14 +34,14 @@ export function useConnection(
       reconnectTimer: ReturnType<typeof setTimeout> | undefined,
       attempt = 0,
       current: WebSocket | null = null
-    const failPending = () => {
+    function failPending() {
       for (const p of pending.current.values()) {
         clearTimeout(p.timer)
         p.reject(new Error('连接已断开，操作不会自动重放，请查看最新棋盘'))
       }
       pending.current.clear()
     }
-    const schedule = () => {
+    function schedule() {
       if (!alive) return
       setState('正在重连')
       reconnectTimer = setTimeout(() => void connect(), Math.min(1000 * 2 ** attempt++, 10000))
@@ -65,21 +67,17 @@ export function useConnection(
             setState('已连接')
           }
           if (data.type === 'room.snapshot') {
-            callbacks.current.onRoom(
-              data.room.players.some((p) => p.id === userId) ? data.room : null,
-            )
+            callbacks.current.onRoom(data.room.players.some((p) => p.id === userId) ? data.room : null)
             if (data.room.round?.saveState === 'saved') callbacks.current.onSaved()
           }
           if (data.type === 'command.result') {
-            if (data.room)
-              callbacks.current.onRoom(
-                data.room.players.some((p) => p.id === userId) ? data.room : null,
-              )
+            if (data.room) callbacks.current.onRoom(data.room.players.some((p) => p.id === userId) ? data.room : null)
             const p = pending.current.get(data.actionId)
             if (p) {
               clearTimeout(p.timer)
               pending.current.delete(data.actionId)
-              data.ok ? p.resolve() : p.reject(new Error(data.error?.message ?? '操作失败'))
+              if (data.ok) p.resolve()
+              else p.reject(new Error(data.error?.message ?? '操作失败'))
             }
           }
           if (data.type === 'error') {
@@ -134,7 +132,7 @@ export function useConnection(
       | Omit<Extract<Command, { type: 'room.ready' }>, 'actionId'>
       | Omit<Extract<Command, { type: 'round.start' }>, 'actionId'>
       | Omit<Extract<Command, { type: 'room.snapshot' }>, 'actionId'>
-      | Omit<Extract<Command, { type: 'round.retrySave' }>, 'actionId'>,
+      | Omit<Extract<Command, { type: 'round.retrySave' }>, 'actionId'>
   ) {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN || state !== '已连接')

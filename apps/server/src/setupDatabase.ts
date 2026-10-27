@@ -1,9 +1,11 @@
-import { randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+
 import pg from 'pg'
+
 import { projectRoot } from './config'
 
 // 此脚本只生成数据库运行配置和凭证，不保存游戏业务数据。
@@ -11,14 +13,17 @@ const localDir = resolve(projectRoot, '.local'),
   configPath = resolve(localDir, 'database.json')
 const dataDir = resolve(projectRoot, '.postgres')
 const bin = process.env.PG_BIN || 'D:/Program Files/PostgreSQL/17/bin'
-const exe = (name: string) => resolve(bin, `${name}${process.platform === 'win32' ? '.exe' : ''}`)
-const run = (name: string, args: string[]) =>
-  execFileSync(exe(name), args, {
+function exe(name: string) {
+  return resolve(bin, `${name}${process.platform === 'win32' ? '.exe' : ''}`)
+}
+function run(name: string, args: string[]) {
+  return execFileSync(exe(name), args, {
     windowsHide: true,
     encoding: 'utf8',
     stdio: 'ignore',
     timeout: 20000,
   })
+}
 type LocalDatabase = {
   databaseUrl: string
   source: 'isolated' | 'existing'
@@ -36,8 +41,7 @@ if (process.argv.includes('--stop')) {
   if (!saved && !process.env.DATABASE_URL) {
     const password = randomBytes(24).toString('hex')
     const port = Number(process.env.GAME_PG_PORT || 55432)
-    if (!Number.isInteger(port) || port < 1024 || port > 65535)
-      throw new Error('GAME_PG_PORT 不合法')
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('GAME_PG_PORT 不合法')
     const adminUrl = process.env.PG_ADMIN_URL
     if (adminUrl) {
       const admin = new pg.Client({
@@ -47,8 +51,7 @@ if (process.argv.includes('--stop')) {
       await admin.connect()
       try {
         const exists = await admin.query("SELECT 1 FROM pg_roles WHERE rolname='lights_game'")
-        if (exists.rowCount)
-          throw new Error('lights_game 账号已存在，请配置其 DATABASE_URL，不覆盖已有密码')
+        if (exists.rowCount) throw new Error('lights_game 账号已存在，请配置其 DATABASE_URL，不覆盖已有密码')
         await admin.query(`CREATE ROLE lights_game LOGIN PASSWORD '${password}'`)
         await admin.query('CREATE DATABASE kook_coop_lights OWNER lights_game')
       } finally {
@@ -64,8 +67,7 @@ if (process.argv.includes('--stop')) {
         port: Number(u.port || 5432),
       }
     } else {
-      if (!existsSync(exe('initdb')))
-        throw new Error('未找到 PostgreSQL，请设置 PG_BIN 或专用 DATABASE_URL')
+      if (!existsSync(exe('initdb'))) throw new Error('未找到 PostgreSQL，请设置 PG_BIN 或专用 DATABASE_URL')
       if (existsSync(resolve(dataDir, 'PG_VERSION')))
         throw new Error('独立数据库已存在但连接配置缺失，请恢复 .local/database.json')
       const passwordFile = resolve(localDir, 'init-password.tmp')
@@ -151,9 +153,7 @@ if (process.argv.includes('--stop')) {
     try {
       if (!(await owner.query("SELECT 1 FROM pg_roles WHERE rolname='lights_game'")).rowCount)
         await owner.query(`CREATE ROLE lights_game LOGIN PASSWORD '${password}'`)
-      if (
-        !(await owner.query("SELECT 1 FROM pg_database WHERE datname='kook_coop_lights'")).rowCount
-      )
+      if (!(await owner.query("SELECT 1 FROM pg_database WHERE datname='kook_coop_lights'")).rowCount)
         await owner.query('CREATE DATABASE kook_coop_lights OWNER lights_game')
     } finally {
       await owner.end()
@@ -171,13 +171,11 @@ if (process.argv.includes('--stop')) {
   await client.connect()
   try {
     await client.query('BEGIN')
-    await client.query(
-      await readFile(resolve(projectRoot, 'db/migrations/001_initial.sql'), 'utf8'),
-    )
+    await client.query(await readFile(resolve(projectRoot, 'db/migrations/001_initial.sql'), 'utf8'))
     await client.query('COMMIT')
     const version = await client.query('SHOW server_version')
     console.info(
-      `PostgreSQL ${version.rows[0].server_version} 就绪，数据库 kook_coop_lights，端口 ${new URL(databaseUrl).port || '5432'}；凭证保存在 .local/database.json。`,
+      `PostgreSQL ${version.rows[0].server_version} 就绪，数据库 kook_coop_lights，端口 ${new URL(databaseUrl).port || '5432'}；凭证保存在 .local/database.json。`
     )
   } catch (e) {
     await client.query('ROLLBACK')

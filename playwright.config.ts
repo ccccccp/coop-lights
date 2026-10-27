@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+
 const baseURL = 'http://127.0.0.1:5198'
 export default defineConfig({
   testDir: './tests/e2e',
@@ -18,6 +19,7 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 30000,
     env: {
+      APP_MODE: 'standalone',
       SERVER_PORT: '5198',
       ALLOWED_GAME_ORIGINS: baseURL,
       ENABLE_DEV_FAULTS: 'true',

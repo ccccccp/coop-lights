@@ -20,6 +20,6 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
     reuseExistingServer: false,
     timeout: 45000,
-    env: { SDK_TEST_ISOLATED: 'true' },
+    env: { SDK_TEST_ISOLATED: 'true', VITE_KOOK_HOST_ORIGINS: 'https://localhost:5190' },
   },
 })

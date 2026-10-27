@@ -2,9 +2,9 @@
   "name": "kook-coop-lights",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.8.0",
+  "packageManager": "pnpm@10.26.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18.0"
   },
   "scripts": {
     "dev": "concurrently -k -n server,web \"pnpm --dir apps/server dev\" \"pnpm --dir apps/web dev\"",

@@ -1,5 +1,7 @@
-import { test, expect } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+
 import { solve } from '../../apps/server/src/board'
+
 test('双浏览器协作、刷新恢复、结算和退出', async ({ browser }, testInfo) => {
   const aContext = await browser.newContext(),
     bContext = await browser.newContext()
@@ -34,9 +36,7 @@ test('双浏览器协作、刷新恢复、结算和退出', async ({ browser }, 
     for (let i = 0; i < cells.length; i++) {
       const actor = i % 2 ? b : a
       await actor.getByTestId(`cell-${cells[i]}`).click()
-      await expect
-        .poll(async () => (await (await a.request.get('/api/session')).json()).room.round.moves)
-        .toBe(i + 1)
+      await expect.poll(async () => (await (await a.request.get('/api/session')).json()).room.round.moves).toBe(i + 1)
       if (i === 0) {
         await b.reload()
         await expect(b.getByTestId('active-room-code')).toHaveText(id)

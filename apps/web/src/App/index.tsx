@@ -158,6 +158,7 @@ export function App() {
     })
   }
   const kook = health?.platform.mode === 'kook'
+  const loginAvailable = !!health?.oauthConfigured && !!platform?.availableScopes.includes('profile.basic')
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -260,12 +261,15 @@ export function App() {
               <button
                 className="primary wide"
                 data-testid={kook ? 'kook-login' : 'standalone-login'}
-                disabled={busy || (kook ? platform?.status !== 'ready' || !health?.oauthConfigured : !nickname.trim())}
+                disabled={busy || (kook ? platform?.status !== 'ready' || !loginAvailable : !nickname.trim())}
               >
                 {busy ? '正在进入…' : kook ? '使用 KOOK 登录 →' : '进入游戏 →'}
               </button>
               {kook && !health?.oauthConfigured && (
                 <p className="entry-note">游戏服务端尚未配置 KOOK OAuth，请先完成本地配置。</p>
+              )}
+              {kook && health?.oauthConfigured && platform?.status === 'ready' && !loginAvailable && (
+                <p className="entry-note">当前 KOOK 宿主尚未开放账号授权，请等待平台开放后登录。</p>
               )}
               {kook && platform?.status !== 'ready' && (
                 <p className="entry-note">{platform?.message || '正在连接 KOOK…'}</p>

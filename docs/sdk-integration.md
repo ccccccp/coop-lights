@@ -1,24 +1,31 @@
 # SDK 接入说明
 
-更新：2026-10-23。已完成可配置接入与模拟宿主验证，真实 KOOK 宿主和 OAuth 应用凭证尚未提供。
+更新：2026-10-26。游戏已接收 KOOK 宿主启动消息；打开、加载、续期和退出已通过生产宿主代码与实际游戏页面的受控验证。真实测试环境尚受登录风控阻塞，未完成真实后端验收。
 
 ## 前端启动与登录
 
-`apps/web/src/platform.ts` 使用 SDK 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式先等待可信启动参数，完成 `ready()` 后展示欢迎页并上报加载完成；只有用户点击登录时才调用 `session.get()`。
+`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.0-alpha.1` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；登录由用户操作触发。
 
-游戏提供自己的启动入口 `window.startCoopLights(options)`。这是本游戏与启动器的对接点，不是 KOOK SDK 的全局 API。实际启动器须在游戏页面内通过双方确认的可信注入方式调用：
+在游戏根目录 `.env` 配置前端宿主白名单，然后重新构建游戏：
 
-```ts
-window.startCoopLights({
-  hostOrigin: trustedLaunch.hostOrigin,
-  sessionId: trustedLaunch.sessionId,
-  generation: trustedLaunch.generation,
-})
+```dotenv
+VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:3000
 ```
 
-这些参数必须来自平台可信启动链路。游戏不从普通 query、任意 `postMessage` 或用户输入推断绑定。跨来源宿主不能直接访问 iframe 的 JavaScript；本地测试服务器按随机启动路径注入参数，真实环境需对接其实际启动机制。
+仅填写实际需要的 HTTPS origin，多个来源用逗号分隔；本地开发结束后移除 localhost。Vite 从游戏根目录加载该配置，不读取 URL 参数或 referrer 作为信任来源。
 
-每页只接受一组绑定，同组重复注入幂等。切换账号或实例需要重新加载页面。未收到启动参数时会提示从宿主重新打开，可在参数到达后重试连接。
+游戏等待父窗口的消息：
+
+```ts
+{
+  type: 'KOOK_MINI_GAME_BOOTSTRAP',
+  bootstrap: { hostOrigin, sessionId, generation }
+}
+```
+
+同时校验父窗口、配置白名单以及 `bootstrap.hostOrigin === event.origin`。监听建立后向白名单宿主发送 `KOOK_MINI_GAME_BOOTSTRAP_REQUEST`，避免初始化晚于 iframe load 而漏掉参数。每页只接受一组绑定，成功、取消或超时后移除监听；重新打开游戏使用新的 iframe。
+
+无需再注入 `window.startCoopLights()`。宿主尚未开放 `profile.basic` 时，欢迎页仍能完成加载和续期，登录按钮禁用并说明原因；这不建立游戏账号，也不替代 OAuth。联机游玩仍需真实授权服务。宿主关闭游戏后 SDK 停止探测，页面卸载时销毁适配器与订阅；退出是否成功由宿主的 leave 接口决定。
 
 新页面不会仅凭已有游戏 cookie 自动恢复 KOOK 身份。用户点击登录并完成本次授权码交换后，后端可恢复相同账号仍在宽限期内的游戏房间。
 
@@ -74,10 +81,10 @@ window.startCoopLights({
 
 ## 模拟宿主与测试
 
-`pnpm dev:sdk` 构建并运行本地自测环境：
+`VITE_KOOK_HOST_ORIGINS=https://localhost:5190 pnpm dev:sdk` 构建并运行本地自测环境（PowerShell 先设置对应环境变量）：
 
 - 宿主：`https://localhost:5190/`。
-- 游戏 iframe：`https://127.0.0.1:5190/launch/...`，与宿主不同来源。
+- 游戏 iframe：`https://127.0.0.1:5190/launch/...`，与宿主不同来源；通过同一启动消息协议接收绑定。
 - 游戏服务：loopback 5191，经 HTTPS 入口转发。
 - OAuth 服务：随机 loopback 端口，使用一次性测试授权码、短期 token 和明确标注的测试用户。
 
@@ -87,4 +94,4 @@ window.startCoopLights({
 
 自动验证命令见 [README](../README.md)。`pnpm test:sdk` 自动忽略仅本地测试证书，使用隔离 schema；桌面和窄屏截图输出到 `.sdk-test/results/`。手动测试需要先分别接受两个 HTTPS 来源的本地证书。
 
-后续真实联调需提供应用配置、可信启动参数注入方式和宿主环境，验证实际 OAuth 响应、账号切换、邀请、权限撤销、恢复和 iframe cookie 行为。本地测试不覆盖真实客户端或平台服务实现。
+后续真实联调需提供可登录的测试环境和应用配置，验证实际 OAuth 响应、账号切换、邀请、权限撤销、恢复和 iframe cookie 行为。本地测试不覆盖真实客户端或平台服务实现。
