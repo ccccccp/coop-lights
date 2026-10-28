@@ -44,32 +44,83 @@ function endpoint(value: string): string {
   return url.href
 }
 
-async function readResponse(url: string, init: RequestInit): Promise<Record<string, unknown>> {
-  try {
-    const response = await fetch(endpoint(url), { ...init, redirect: 'error', signal: AbortSignal.timeout(8000) })
-    check(response.ok, 'PLATFORM_LOGIN_FAILED', 'KOOK 登录服务未完成请求，请重新登录', 502)
-    const body = (await response.json()) as Record<string, unknown>
-    check(
-      body && typeof body === 'object' && !Array.isArray(body),
-      'PLATFORM_RESPONSE_INVALID',
-      'KOOK 登录响应格式不正确',
-      502
+type OAuthStage = 'token' | 'userinfo'
+
+// 仅公开上游的错误字段；脱敏后再截断，避免将请求凭证带回浏览器。
+function publicErrorText(value: unknown, secrets: string[]): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return
+  let text = value
+  const variants = secrets.filter(Boolean).flatMap((secret) => [secret, encodeURIComponent(secret)])
+  for (const secret of [...new Set(variants)].sort((a, b) => b.length - a.length))
+    text = text.split(secret).join('[REDACTED]')
+  return text
+    .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /(["']?(?:client_secret|access_token|refresh_token|auth_code|authorization|code)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+      '$1[REDACTED]'
     )
-    if ('code' in body) {
-      check(body.code === 0, 'PLATFORM_LOGIN_FAILED', 'KOOK 登录服务拒绝了请求，请重新登录', 502)
-      check(
-        body.data && typeof body.data === 'object' && !Array.isArray(body.data),
-        'PLATFORM_RESPONSE_INVALID',
-        'KOOK 登录响应缺少数据',
-        502
-      )
-      return body.data as Record<string, unknown>
-    }
-    return body
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 512)
+}
+
+async function readResponse(url: string, init: RequestInit, stage: OAuthStage, secrets: string[]) {
+  const address = new URL(endpoint(url))
+  const details = { stage, endpoint: address.origin + address.pathname }
+  const label = stage === 'token' ? 'KOOK 换码' : 'KOOK 用户信息请求'
+  let response: Response
+  try {
+    response = await fetch(address, { ...init, redirect: 'error', signal: AbortSignal.timeout(8000) })
   } catch (error) {
-    if (error instanceof GameError) throw error
-    throw new GameError('PLATFORM_LOGIN_FAILED', 'KOOK 登录服务暂不可用，请重新登录', 502)
+    const failure = error as { name?: string; cause?: { code?: string }; code?: string }
+    const code = failure?.cause?.code ?? failure?.code
+    const networkCode = ['TimeoutError', 'AbortError'].includes(failure?.name ?? '')
+      ? 'TIMEOUT'
+      : typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code)
+        ? code
+        : 'NETWORK_ERROR'
+    const reason =
+      networkCode === 'TIMEOUT'
+        ? '请求超时'
+        : networkCode === 'ENOTFOUND' || networkCode === 'EAI_AGAIN'
+          ? '域名解析失败'
+          : networkCode === 'ECONNREFUSED'
+            ? '连接被拒绝'
+            : '网络或 TLS 连接失败'
+    throw new GameError('PLATFORM_LOGIN_FAILED', `${label}失败：${reason}（${networkCode}）`, 502, {
+      ...details,
+      network_code: networkCode,
+    })
   }
+  const responseDetails = { ...details, http_status: response.status }
+  const parsed: unknown = await response.json().catch(() => undefined)
+  const body =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined
+  // OAuth 错误使用 error/error_description；KOOK 业务错误使用 code/message。
+  const upstreamCode = typeof body?.code === 'number' ? body.code : publicErrorText(body?.code ?? body?.error, secrets)
+  const upstreamMessage = publicErrorText(body?.error_description ?? body?.message, secrets)
+  if (!response.ok || (body && 'code' in body && body.code !== 0) || typeof body?.error === 'string') {
+    const reason = [
+      `HTTP ${response.status}`,
+      upstreamCode,
+      upstreamMessage,
+      parsed === undefined ? '上游响应不是有效 JSON' : undefined,
+    ]
+      .filter((value) => value !== undefined)
+      .join('；')
+    throw new GameError('PLATFORM_LOGIN_FAILED', `${label}失败：${reason}`, 502, {
+      ...responseDetails,
+      ...(upstreamCode !== undefined ? { upstream_code: upstreamCode } : {}),
+      ...(upstreamMessage ? { upstream_message: upstreamMessage } : {}),
+    })
+  }
+  if (!body)
+    throw new GameError('PLATFORM_RESPONSE_INVALID', `${label}响应格式不正确：需要 JSON 对象`, 502, responseDetails)
+  if ('code' in body) {
+    if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data))
+      throw new GameError('PLATFORM_RESPONSE_INVALID', `${label}响应缺少 data 对象`, 502, responseDetails)
+    return { data: body.data as Record<string, unknown>, details: responseDetails }
+  }
+  return { data: body, details: responseDetails }
 }
 
 function publicAvatarUrl(value: unknown): string | null {
@@ -84,41 +135,64 @@ function publicAvatarUrl(value: unknown): string | null {
 
 export async function exchangeKookCode(config: Config['kook'], code: string): Promise<VerifiedIdentity> {
   check(isOAuthConfigured(config), 'PLATFORM_NOT_CONFIGURED', '游戏服务端尚未配置 KOOK OAuth', 503)
-  const received = await readResponse(config.tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      redirect_uri: config.redirectUri,
-      code,
-    }),
-  })
+  const secrets = [config.clientSecret, code]
+  const received = await readResponse(
+    config.tokenUrl,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: config.redirectUri,
+        code,
+      }),
+    },
+    'token',
+    secrets
+  )
   const token = z
     .object({
       access_token: z.string().min(1).max(16384),
       token_type: z.string().refine((value) => value.toLowerCase() === 'bearer'),
       expires_in: z.coerce.number().int().positive().max(31536000),
     })
-    .safeParse(received)
-  check(token.success, 'PLATFORM_RESPONSE_INVALID', 'KOOK 换码响应格式不正确', 502)
+    .safeParse(received.data)
+  if (!token.success)
+    throw new GameError('PLATFORM_RESPONSE_INVALID', 'KOOK 换码响应字段不正确', 502, {
+      ...received.details,
+      invalid_fields: token.error.issues.map((issue) => issue.path.join('.')),
+    })
+  secrets.push(token.data.access_token)
+  if (typeof received.data.refresh_token === 'string') secrets.push(received.data.refresh_token)
   const expiresAt = Date.now() + token.data.expires_in * 1000
-  const profile = await readResponse(config.userInfoUrl, {
-    headers: { Authorization: `Bearer ${token.data.access_token}`, Accept: 'application/json' },
-  })
+  const profile = await readResponse(
+    config.userInfoUrl,
+    {
+      headers: { Authorization: `Bearer ${token.data.access_token}`, Accept: 'application/json' },
+    },
+    'userinfo',
+    secrets
+  )
   const identity = z
     .object({
       openCode: z.string().trim().min(1).max(256),
       nickname: z.string().trim().min(1).max(100),
     })
-    .safeParse({ openCode: profile[config.userIdField!], nickname: profile[config.userNameField] })
-  check(identity.success, 'PLATFORM_RESPONSE_INVALID', 'KOOK 用户身份字段与配置不一致', 502)
+    .safeParse({ openCode: profile.data[config.userIdField!], nickname: profile.data[config.userNameField] })
+  if (!identity.success)
+    throw new GameError('PLATFORM_RESPONSE_INVALID', 'KOOK 用户身份字段与配置不一致', 502, {
+      ...profile.details,
+      invalid_fields: identity.error.issues.map((issue) =>
+        issue.path[0] === 'openCode' ? config.userIdField : config.userNameField
+      ),
+    })
   return {
     identity: {
       appId: config.clientId,
       ...identity.data,
-      avatarUrl: publicAvatarUrl(profile.avatar ?? profile.avatarUrl ?? profile.avatar_url),
+      avatarUrl: publicAvatarUrl(profile.data.avatar ?? profile.data.avatarUrl ?? profile.data.avatar_url),
     },
     expiresAt,
   }

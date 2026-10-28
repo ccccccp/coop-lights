@@ -133,7 +133,16 @@ test('logout revokes the issued session and login cannot accept a failed exchang
   const failed = await f.http('/api/kook/login/complete', tx.cookie, { state: tx.data.state, code: 'unknown-code' })
   expect(failed.status).toBe(502)
   expect(failed.cookie).toBe('')
+  expect(failed.data.code).toBe('PLATFORM_LOGIN_FAILED')
+  expect(failed.data.details).toEqual({
+    stage: 'token',
+    endpoint: f.oauth.config.tokenUrl,
+    http_status: 400,
+    upstream_code: 'invalid_grant',
+  })
+  expect(failed.data.message).toContain('invalid_grant')
   expect(JSON.stringify(failed.data)).not.toContain('unknown-code')
+  expect(JSON.stringify(failed.data)).not.toContain(f.oauth.config.clientSecret)
 })
 
 test('transaction expiry, replacement and reuse fail closed', () => {
