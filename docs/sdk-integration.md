@@ -58,6 +58,8 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 4. 后端一次性消费 state，向配置的 OAuth 服务交换 token、读取用户身份，并创建自己的游戏会话。KOOK token 和应用密钥不会返回浏览器；nonce 调用额外取得游戏自己的随机 `gameToken`，仅驻留前端模块内存，用作 API 的 Bearer 凭证，不写入存储或页面展示状态。Cookie 调用的响应保持兼容。
 5. 游戏继续使用已有的房间 HTTP API、一次性 WebSocket 票据及服务端点灯协议。
 
+`/api/kook/login/complete` 的 OAuth 错误通过 `message` 返回具体原因，并在 `details` 中提供失败阶段 `stage`（`token` 换码或 `userinfo` 用户资料）、接口 `endpoint`、上游 `http_status`、`upstream_code` 和 `upstream_message`；网络失败提供 `network_code`，响应字段错误提供 `invalid_fields`。仅返回对应错误的字段，接口地址不含查询参数，凭证均脱敏。例如：`{"code":"PLATFORM_LOGIN_FAILED","message":"KOOK 换码失败：HTTP 400；invalid_grant；Redirect URI mismatch","details":{"stage":"token","endpoint":"https://kook.example/api/oauth2/token","http_status":400,"upstream_code":"invalid_grant","upstream_message":"Redirect URI mismatch"}}`。
+
 事务有效期为 5 分钟，旧事务、跨浏览器 state、重复使用、伪造身份字段和取消后到达的响应均被拒绝。追加权限会重新验证身份并更新游戏会话，WebSocket 随之重新认证。
 
 `/api/kook/login/cancel` 同样支持 nonce，能够在 Cookie 缺失时取消在途换码或注销它已创建的会话。Bearer 无效时不会退回 Cookie 冒用另一会话；WebSocket 仍只使用原有一次性票据。退出登录、撤销、关闭或登录响应迟到时清理游戏自己的会话；页面刷新后重新由用户授权。数据库中的应用命名空间、身份字段、会话期限和现有三个登录路由均保留。

@@ -104,7 +104,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   })
   app.setErrorHandler((error, req, reply) => {
     if (error instanceof GameError)
-      return reply.code(error.statusCode).send({ code: error.code, message: error.message })
+      return reply.code(error.statusCode).send({ code: error.code, message: error.message, details: error.details })
     if ((error instanceof Error && error.name === 'ZodError') || (error as { statusCode?: number })?.statusCode === 400)
       return reply.code(400).send({
         code: 'INVALID_INPUT',
