@@ -4,7 +4,7 @@
 
 ## 前端启动与登录
 
-`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.0-alpha.1` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
+`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.0-alpha.2` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
 
 在游戏根目录 `.env` 配置前端宿主白名单，然后重新构建游戏：
 

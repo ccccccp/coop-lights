@@ -4,7 +4,7 @@ React + TypeScript + Node.js 的 1～4 人协作点灯游戏，使用 PostgreSQL
 
 本独立项目同步维护旁边 `../kook-minigame-sdk/examples/coop-lights` 的游戏实现，SDK 运行库使用 npmjs 已发布包。
 
-SDK 固定使用 npmjs 已发布的 `0.1.0-alpha.1`，采用 `createKookClient` 具名导入。
+SDK 固定使用 npmjs 已发布的 `0.1.0-alpha.2`，采用 `createKookClient` 具名导入。
 
 已接入 KOOK 小游戏 SDK，支持登录授权、邀请、平台数据调试、连接恢复与授权撤销。当前可用本地模拟宿主完成自测；真实 KOOK 环境需要补齐应用配置并联调。配置和接入边界见 [SDK 接入说明](docs/sdk-integration.md)。
 
