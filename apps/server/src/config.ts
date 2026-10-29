@@ -24,6 +24,8 @@ const envSchema = z.object({
     .string()
     .default('http://localhost:5178,http://127.0.0.1:5178,http://localhost:5188,http://127.0.0.1:5188'),
   DATABASE_URL: z.string().default(''),
+  LOG_ACCESS_KEY: z.string().default(''),
+  LOG_RETENTION_DAYS: z.coerce.number().int().min(3).max(90).default(7),
   KOOK_CLIENT_ID: z.string().default(''),
   KOOK_CLIENT_SECRET: z.string().default(''),
   KOOK_REDIRECT_URI: z.string().default(''),
@@ -53,6 +55,8 @@ export function getConfig() {
     devFaults: e.ENABLE_DEV_FAULTS === 'true' && e.APP_MODE === 'standalone' && process.env.NODE_ENV !== 'production',
     allowedOrigins: e.ALLOWED_GAME_ORIGINS.split(',').map((x) => new URL(x.trim()).origin),
     databaseUrl,
+    logAccessKey: e.LOG_ACCESS_KEY,
+    logRetentionDays: e.LOG_RETENTION_DAYS,
     tls: readGameTls(e.SERVER_HTTPS === 'true', e.GAME_TLS_CERT, e.GAME_TLS_KEY, projectRoot),
     kook: {
       clientId: e.KOOK_CLIENT_ID,

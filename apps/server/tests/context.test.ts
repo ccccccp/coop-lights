@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 
 import type { Config } from '../src/config'
-import { exchangeKookCode } from '../src/platform'
+import { exchangeKookCode, readKookContext } from '../src/platform'
 
 const config: Config['kook'] = {
   clientId: 'test-client',
@@ -36,8 +36,10 @@ function mock(data: unknown, status = 200) {
 
 test('同一OAuth token在后端查询真实context，room_id和实例核验成功才返回启动信息', async () => {
   const fetcher = mock({ code: 0, data: valid })
-  const result = await exchangeKookCode(config, 'code-once', 'instance')
-  expect(result.launch).toEqual({ instanceId: 'instance', invitedRoomId: 'ABC234' })
+  const result = await exchangeKookCode(config, 'code-once').then((grant) =>
+    readKookContext(config, grant.accessToken, 'instance')
+  )
+  expect(result).toEqual({ instanceId: 'instance', invitedRoomId: 'ABC234' })
   const url = new URL(String(fetcher.mock.calls[2][0]))
   expect(url.pathname).toBe('/api/v3/mini-game/context')
   expect(Object.fromEntries(url.searchParams)).toEqual({ game_code: config.gameCode, instance_id: 'instance' })
@@ -48,7 +50,13 @@ test('同一OAuth token在后端查询真实context，room_id和实例核验成�
 
 test.each([null, '', undefined])('context room_id为%j时保持主页，不猜测邀请房间', async (roomId) => {
   mock({ code: 0, data: { ...valid, room_id: roomId } })
-  expect((await exchangeKookCode(config, 'code-once', 'instance')).launch?.invitedRoomId).toBeNull()
+  expect(
+    (
+      await exchangeKookCode(config, 'code-once').then((grant) =>
+        readKookContext(config, grant.accessToken, 'instance')
+      )
+    ).invitedRoomId
+  ).toBeNull()
 })
 
 test.each([
@@ -59,7 +67,9 @@ test.each([
   { ...valid, context_type: 0 },
 ])('错误context不允许建立可信实例绑定：%j', async (context) => {
   mock({ code: 0, data: context })
-  await expect(exchangeKookCode(config, 'code-once', 'instance')).rejects.toMatchObject({
+  await expect(
+    exchangeKookCode(config, 'code-once').then((grant) => readKookContext(config, grant.accessToken, 'instance'))
+  ).rejects.toMatchObject({
     code: 'PLATFORM_CONTEXT_INVALID',
   })
 })
@@ -68,10 +78,46 @@ test('context接口无权限时不退回浏览器房间，错误不会泄漏OAut
   mock({ code: 403, message: `Missing mini_game.context; Bearer ${accessToken}` }, 403)
   let failure: unknown
   try {
-    await exchangeKookCode(config, 'code-once', 'instance')
+    await exchangeKookCode(config, 'code-once').then((grant) => readKookContext(config, grant.accessToken, 'instance'))
   } catch (error) {
     failure = error
   }
   expect(failure).toMatchObject({ code: 'PLATFORM_LOGIN_FAILED', details: { stage: 'context', http_status: 403 } })
   expect(JSON.stringify(failure)).not.toContain(accessToken)
+})
+
+test('context结构不匹配返回失败字段和类型，不回显嵌套资料或凭据', async () => {
+  mock({
+    code: 0,
+    data: {
+      game_code: config.gameCode,
+      instance: { instance_id: 'instance', context_type: 4, context_id: 'private-chat' },
+      invite: { room_id: 'ABC234', status: 'joined_by_invite' },
+      user: { user_code: 'private-user-code' },
+      access_token: accessToken,
+      client_secret: config.clientSecret,
+    },
+  })
+  let failure: unknown
+  try {
+    await exchangeKookCode(config, 'private-auth-code').then((grant) =>
+      readKookContext(config, grant.accessToken, 'instance')
+    )
+  } catch (error) {
+    failure = error
+  }
+  expect(failure).toMatchObject({
+    code: 'PLATFORM_CONTEXT_INVALID',
+    details: {
+      stage: 'context',
+      endpoint: config.contextUrl,
+      http_status: 200,
+      invalid_fields: ['instance_id', 'context_type', 'context_id'],
+      received_types: { instance_id: 'undefined', context_type: 'undefined', instance: 'object', invite: 'object' },
+    },
+  })
+  expect(JSON.stringify(failure)).not.toContain(accessToken)
+  expect(JSON.stringify(failure)).not.toContain(config.clientSecret)
+  expect(JSON.stringify(failure)).not.toContain('private-user-code')
+  expect(JSON.stringify(failure)).not.toContain('private-auth-code')
 })

@@ -56,17 +56,17 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 1. 游戏生成仅驻留内存的随机 `clientNonce`，调用原有 `/api/kook/login/start`；后端签发随机 state，以 nonce 哈希和请求来源绑定本次事务。未传 nonce 的旧调用继续使用 HttpOnly Cookie 绑定。
 2. SDK 就绪后自动调用一次 `sdk.session.get({ state, scopes })`；取消作为正常结果返回，页面保留重试入口且不会循环弹出授权。
-3. 游戏提交 `code`、`state`、本次 `clientNonce` 和 SDK 返回的 `instanceId` 查询选择器到原有 `/api/kook/login/complete`；不接受浏览器自报用户身份或邀请房间。instanceId 不作为成员资格凭证。
-4. 后端一次性消费 state，交换 token、读取用户身份，再用同一 Bearer token 查询 `/api/v3/mini-game/context?game_code=…&instance_id=…`，核对游戏与实例并读取 `data.room_id`，然后创建绑定实例的游戏会话。KOOK token 和应用密钥不会返回浏览器；nonce 调用额外取得游戏自己的随机 `gameToken`，仅驻留前端模块内存，用作 API 的 Bearer 凭证，不写入存储或页面展示状态。Cookie 调用的响应保持兼容。
+3. 游戏提交 code、state、clientNonce 到原有 /api/kook/login/complete，instanceId 为兼容的可选字段，不触发实例查询。普通打开仅申请 get_user_info。
+4. 后端一次性消费 state，交换 token 并读取用户身份后即创建游戏会话，不调用 context。OAuth token 仅保存在游戏后端内存，游戏前端只持有自己的游戏会话。
 5. 游戏继续使用已有的房间 HTTP API、一次性 WebSocket 票据及服务端点灯协议。
 
-`/api/kook/login/complete` 的 OAuth 错误通过 `message` 返回具体原因，并在 `details` 中提供失败阶段 `stage`（`token` 换码、`userinfo` 用户资料或 `context` 实例上下文）、接口 `endpoint`、上游 `http_status`、`upstream_code` 和 `upstream_message`；网络失败提供 `network_code`，响应字段错误提供 `invalid_fields`。仅返回对应错误的字段，接口地址不含查询参数，凭证均脱敏。例如：`{"code":"PLATFORM_LOGIN_FAILED","message":"KOOK 换码失败：HTTP 400；invalid_grant；Redirect URI mismatch","details":{"stage":"token","endpoint":"https://kook.example/api/oauth2/token","http_status":400,"upstream_code":"invalid_grant","upstream_message":"Redirect URI mismatch"}}`。
+`/api/kook/login/complete` 的 OAuth 错误通过 `message` 返回具体原因，并在 `details` 中提供失败阶段 `stage`（`token` 换码、`userinfo` 用户资料或 `context` 实例上下文）、接口 `endpoint`、上游 `http_status`、`upstream_code` 和 `upstream_message`；网络失败提供 `network_code`，响应字段错误提供 `invalid_fields`；context 字段校验失败额外返回固定白名单字段的 `received_types`（只有类型，不回显上游值），用于区分扁平／嵌套结构和类型错误。仅返回对应错误的字段，接口地址不含查询参数，凭证均脱敏。例如：`{"code":"PLATFORM_LOGIN_FAILED","message":"KOOK 换码失败：HTTP 400；invalid_grant；Redirect URI mismatch","details":{"stage":"token","endpoint":"https://kook.example/api/oauth2/token","http_status":400,"upstream_code":"invalid_grant","upstream_message":"Redirect URI mismatch"}}`。
 
 事务有效期为 5 分钟，旧事务、跨浏览器 state、重复使用、伪造身份字段和取消后到达的响应均被拒绝。追加权限会重新验证身份并更新游戏会话，WebSocket 随之重新认证。
 
 `/api/kook/login/cancel` 同样支持 nonce，能够在 Cookie 缺失时取消在途换码或注销它已创建的会话。Bearer 无效时不会退回 Cookie 冒用另一会话；WebSocket 仍只使用原有一次性票据。退出登录、撤销、关闭或登录响应迟到时清理游戏自己的会话；页面刷新后重新由用户授权。数据库中的应用命名空间、身份字段、会话期限和现有三个登录路由均保留。
 
-`ready().instanceId` 仅作 context 查询选择器，成员资格由 KOOK 使用同一 OAuth token 复核。采用平台扁平响应 `data.{game_code,instance_id,context_type,context_id,room_id}`。自动入房只消费游戏后端确认的 `room_id`；空值显示主页，不使用 SDK 或 URL 值补齐。房间存在、容量和平台实例归属由游戏后端校验。context 失败或实例不匹配时不建立游戏会话。旧的未绑定实例的 KOOK 会话需要重新授权。
+受邀启动在基本登录成功后，独立调用 /api/kook/invite/resolve 核验 context。room_id 为空显示主页；解析或网络失败提示原因并保留基本登录。服务端以本次 OAuth 用户身份核验请求实例和邀请房间，绝不使用 SDK 或 URL 房间号补齐可信数据。普通建房、手动输入房间号及基本登录不依赖 context。
 
 ## 已接入的 SDK 能力
 
@@ -109,3 +109,7 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 用户资料保存于 lights_users.avatar_url，房间玩家快照同步 avatarUrl；重新授权更新资料时广播给同房间玩家。迁移脚本幂等补充头像列，不改变应用命名空间、用户标识、会话协议或累计成绩。已有数据库执行 pnpm db:migrate 后再启动服务。
 
 实例核验依赖平台 OAuth 的 `mini_game.context` 权限；宿主授权应包含既有基本资料权限和该权限，游戏后端凭 token 读取 context，SDK 不接收 token。
+
+## 日志查询
+
+/log 页面及游戏内“调用日志”入口读取 /api/logs。需服务端 LOG_ACCESS_KEY，以 x-log-key 请求头访问，支持登录失败前查询。默认最近3天倒序，记录 KOOK／游戏请求参数、脱敏响应、HTTP状态、业务码、耗时、错误及关联编号；PostgreSQL持久化，默认保留7天（LOG_RETENTION_DAYS）。部署执行 pnpm db:migrate。

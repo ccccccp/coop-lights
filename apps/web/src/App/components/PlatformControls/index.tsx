@@ -9,22 +9,21 @@ interface Props {
   platform: PlatformContext
   busy: boolean
   run: (job: () => Promise<void>) => Promise<void>
-  authorize: (scopes: string[]) => Promise<void>
 }
 
 const resources: { resource: PlatformResource; label: string; capability: string; scope: string }[] = [
-  { resource: 'friends', label: '读取好友与私聊', capability: 'social.getFriendsAndDms', scope: 'friends.dms.read' },
-  { resource: 'channel', label: '读取频道成员', capability: 'channel.getMembers', scope: 'channel.members.read' },
-  { resource: 'participants', label: '读取实例参与者', capability: 'instance.getParticipants', scope: 'profile.basic' },
+  { resource: 'friends', label: '读取好友与私聊', capability: 'social.getFriendsAndDms', scope: 'get_user_info' },
+  { resource: 'channel', label: '读取频道成员', capability: 'channel.getMembers', scope: 'get_user_info' },
+  { resource: 'participants', label: '读取实例参与者', capability: 'instance.getParticipants', scope: 'get_user_info' },
   {
     resource: 'officialServer',
     label: '查询官方服务器',
     capability: 'officialServer.getStatus',
-    scope: 'profile.basic',
+    scope: 'get_user_info',
   },
 ]
 
-export function PlatformControls({ adapter, platform, busy, run, authorize }: Props) {
+export function PlatformControls({ adapter, platform, busy, run }: Props) {
   const [result, setResult] = useState<{ resource: PlatformResource; value: PlatformInspection } | null>(null)
   const ready = platform.status === 'ready'
   const scopeKey = platform.authorizedScopes.join(',')
@@ -42,22 +41,6 @@ export function PlatformControls({ adapter, platform, busy, run, authorize }: Pr
   return (
     <div className="platform-controls">
       <div className="platform-buttons">
-        {[
-          ['friends.dms.read', '授权好友与私聊'],
-          ['channel.members.read', '授权频道成员'],
-        ].map(([scope, label]) => (
-          <button
-            className="secondary small"
-            key={scope}
-            type="button"
-            disabled={
-              busy || !ready || !platform.availableScopes.includes(scope) || platform.authorizedScopes.includes(scope)
-            }
-            onClick={() => void authorize(['profile.basic', scope])}
-          >
-            {label}
-          </button>
-        ))}
         {resources.map(({ resource, label, capability, scope }) => (
           <button
             className="secondary small"

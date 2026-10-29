@@ -84,6 +84,8 @@ export const api = {
       body: '{}',
     })
   },
+  resolveInvite: (instanceId: string) =>
+    request<{ instanceId: string; invitedRoomId: string | null }>('/api/kook/invite/resolve', { instanceId }),
   create: () => request<{ room: RoomSnapshot }>('/api/rooms', {}),
   join: (id: string) => request<{ room: RoomSnapshot }>(`/api/rooms/${id}/join`, {}),
   leave: (id: string) => request(`/api/rooms/${id}/leave`, {}),

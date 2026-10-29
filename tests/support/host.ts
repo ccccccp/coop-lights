@@ -19,7 +19,7 @@ const supported = [
   'lifecycle.onStateChanged',
   'instance.onParticipantsChanged',
 ]
-const scopes = ['profile.basic', 'friends.dms.read', 'channel.members.read']
+const scopes = ['get_user_info', 'mini_game.context']
 let server: ScopedBridgeServer
 let auth = { revision: 1, status: 'unauthorized', scopes: [] as string[] }
 let lifecycle = { revision: 1, status: 'active', visibility: 'visible', presentation: 'embedded' }
@@ -64,7 +64,7 @@ function register() {
         platform: 'web',
         capabilities: supported,
         permissionVersion: 'fixture-v1',
-        availableScopes: params.has('core') ? [] : scopes,
+        availableScopes: params.has('core') ? [] : params.has('basic-only') ? ['get_user_info'] : scopes,
         context: {
           contextType: 'voice_channel',
           launchSource: roomId || params.has('spoof-room') ? 'invite' : 'appLauncher',

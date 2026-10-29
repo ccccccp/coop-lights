@@ -4,6 +4,8 @@ import pg from 'pg'
 
 import type { GameUser } from '@lights/contracts'
 
+import type { CallLog, CallLogInput, CallLogQuery, CallLogRepository } from './callLogs'
+
 export interface Identity {
   appId: string
   openCode: string
@@ -26,7 +28,7 @@ export interface Settlement {
   moves: number
   contributions: Record<string, number>
 }
-export interface Repository {
+export interface Repository extends CallLogRepository {
   kind: 'postgres'
   getUser(id: string): Promise<StoredUser | null>
   upsertUser(identity: Identity): Promise<StoredUser>
@@ -121,6 +123,50 @@ export class PostgresRepository implements Repository {
     } finally {
       client.release()
     }
+  }
+
+  async saveCallLog(entry: CallLogInput) {
+    await this.pool.query(
+      'INSERT INTO lights_call_logs(id,started_at,kind,method,endpoint,status,ok,request_id,entry) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [
+        randomUUID(),
+        entry.startedAt,
+        entry.kind,
+        entry.method,
+        entry.endpoint,
+        entry.status,
+        entry.ok,
+        entry.requestId,
+        JSON.stringify(entry),
+      ]
+    )
+  }
+  async listCallLogs(query: CallLogQuery): Promise<CallLog[]> {
+    const args: unknown[] = [query.from, query.to],
+      where = ['started_at >= $1', 'started_at <= $2']
+    const add = (value: unknown) => {
+      args.push(value)
+      return '$' + args.length
+    }
+    if (query.kind) where.push('kind=' + add(query.kind))
+    if (query.errorsOnly) where.push('ok=false')
+    if (query.search) {
+      const parameter = add('%' + query.search + '%')
+      where.push('(endpoint ILIKE ' + parameter + ' OR request_id ILIKE ' + parameter + ')')
+    }
+    if (query.cursor) where.push('(started_at,id) < (' + add(query.cursor.startedAt) + ',' + add(query.cursor.id) + ')')
+    const limit = add(query.limit)
+    const rows = await this.pool.query(
+      'SELECT id,entry FROM lights_call_logs WHERE ' +
+        where.join(' AND ') +
+        ' ORDER BY started_at DESC,id DESC LIMIT ' +
+        limit,
+      args
+    )
+    return rows.rows.map((row) => ({ ...row.entry, id: row.id }))
+  }
+  async pruneCallLogs(before: number) {
+    await this.pool.query('DELETE FROM lights_call_logs WHERE started_at<$1', [before])
   }
   async close() {
     await this.pool.end()

@@ -4,7 +4,7 @@ import type { PlatformAdapter, PlatformContext, PlatformEvent, PlatformResource 
 import { ApiError, api, setGameToken } from './api'
 import { waitForBootstrap } from './bootstrap'
 
-const scopes: Scope[] = ['profile.basic', 'friends.dms.read', 'channel.members.read']
+const scopes: Scope[] = ['get_user_info', 'mini_game.context']
 
 function initialContext(mode: 'standalone' | 'kook'): PlatformContext {
   return {
@@ -132,7 +132,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
     if (
       participantsSubscribed ||
       !sdk.hasCapability('instance.onParticipantsChanged') ||
-      !sdk.hasScope('profile.basic')
+      !sdk.hasScope('get_user_info')
     )
       return
     participantsSubscribed = true
@@ -151,6 +151,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
       if (disposed) return
       patch({
         instanceId: ready.instanceId,
+        launchSource: ready.context.launchSource,
         capabilities: [...ready.capabilities],
         availableScopes: [...ready.availableScopes],
         authorizedScopes: scopes.filter((scope) => sdk.hasScope(scope)),
@@ -224,11 +225,22 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
       })
       return initializedWork
     },
-    async login(_nickname, requested = ['profile.basic']) {
+    async login(_nickname, requested) {
       const sdk = currentClient()
       if (context.status !== 'ready') throw new Error('请等待 KOOK 连接就绪')
       if (transaction) throw new Error('登录请求正在处理中')
-      const selected = [...new Set(['profile.basic', ...context.authorizedScopes, ...requested])]
+      const selected = [
+        ...new Set(
+          [
+            'get_user_info',
+            ...context.authorizedScopes,
+            ...(requested ??
+              (context.launchSource === 'invite' && context.availableScopes.includes('mini_game.context')
+                ? scopes
+                : ['get_user_info'])),
+          ].map((scope) => (scope === 'profile.basic' ? 'get_user_info' : scope))
+        ),
+      ]
       if (selected.some((scope) => !scopes.includes(scope as Scope) || !context.availableScopes.includes(scope))) {
         throw new Error('当前应用尚未开放请求的权限')
       }
@@ -276,6 +288,16 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         transaction = null
         if (state && !success) await api.cancelKookLogin(state).catch(() => undefined)
       }
+    },
+    async resolveInvite() {
+      const sdk = currentClient(),
+        version = loginVersion,
+        epoch = sdk.connection.epoch
+      if (!loggedIn || !context.instanceId) throw new Error('请先完成登录')
+      const result = await api.resolveInvite(context.instanceId)
+      if (disposed || version !== loginVersion || sdk.state !== 'connected' || sdk.connection.epoch !== epoch)
+        throw new Error('邀请期间游戏连接已变化')
+      patch({ invitedRoomId: result.invitedRoomId })
     },
     async logout() {
       loginVersion++

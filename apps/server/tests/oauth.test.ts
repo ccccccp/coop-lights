@@ -33,6 +33,7 @@ async function fixture(allowedOrigins = ['https://game.test']) {
   const repo = await new PostgresRepository(base.databaseUrl, schema).init()
   const config = {
     ...base,
+    logAccessKey: 'test-log-access-key',
     mode: 'kook' as const,
     tls: undefined,
     devFaults: false,
@@ -99,7 +100,7 @@ test('OAuth creates a browser-bound one-use transaction and a server-verified ga
   expect((await f.http('/api/session', result.cookie)).status).toBe(200)
   expect((await f.http('/api/kook/login/complete', transaction.cookie, payload)).status).toBe(401)
   expect(f.oauth.exchanges()).toBe(1)
-  expect((await f.http('/api/rooms', result.cookie, {})).data.room.platformInstanceId).toBe('fixture-instance')
+  expect((await f.http('/api/rooms', result.cookie, {})).data.room.platformInstanceId).toBeNull()
 })
 
 test('OAuth rejects foreign origin, spoofed identity and instance data without exchanging code', async () => {
@@ -349,64 +350,119 @@ test('旧数据库幂等增加头像列，更新头像不改变用户标识和�
   })
 })
 
-test('KOOK后端context确认的room_id和instance_id进入游戏登录结果及会话', async () => {
+test('普通登录不调用context，实例接口异常也保留用户身份和主页', async () => {
+  const f = await fixture()
+  f.oauth.setContextResponse({ unexpected: true })
+  const { result } = await f.login()
+  expect(result.status).toBe(200)
+  expect(result.data.user.nickname).toBe('模拟玩家阿青')
+  expect(result.data.platform.invitedRoomId).toBeNull()
+  expect(f.oauth.contextCalls()).toBe(0)
+  expect((await f.http('/api/rooms', result.cookie, {})).status).toBe(200)
+})
+
+test('邀请核验单独读取room_id，失败保留原登录，成功返回可信房间', async () => {
   const f = await fixture()
   const tx = await f.start()
-  const result = await f.http('/api/kook/login/complete', tx.cookie, {
+  const login = await f.http('/api/kook/login/complete', tx.cookie, {
     state: tx.data.state,
     code: f.oauth.issue('alice', 'ABC234'),
   })
+  f.oauth.setContextResponse({ unexpected: true })
+  const failed = await f.http('/api/kook/invite/resolve', login.cookie, { instanceId: 'fixture-instance' })
+  expect(failed.status).toBe(502)
+  expect((await f.http('/api/session', login.cookie)).status).toBe(200)
+  f.oauth.setContextResponse(undefined)
+  const resolved = await f.http('/api/kook/invite/resolve', login.cookie, { instanceId: 'fixture-instance' })
+  expect(resolved.status).toBe(200)
+  expect(resolved.data).toEqual({ instanceId: 'fixture-instance', invitedRoomId: 'ABC234' })
+  expect(JSON.stringify(resolved.data)).not.toMatch(/accessToken|access_token|client_secret/)
+})
+
+test('邀请未登录、非法房间自报和错误实例均不能核验，不损坏已登录会话', async () => {
+  const f = await fixture(),
+    { result } = await f.login()
+  expect((await f.http('/api/kook/invite/resolve', '', { instanceId: 'fixture-instance' })).status).toBe(401)
+  expect(
+    (await f.http('/api/kook/invite/resolve', result.cookie, { instanceId: 'fixture-instance', room_id: 'FAKE22' }))
+      .status
+  ).toBe(400)
+  expect((await f.http('/api/kook/invite/resolve', result.cookie, { instanceId: 'foreign' })).status).toBe(502)
+  expect((await f.http('/api/session', result.cookie)).status).toBe(200)
+})
+
+test('注销中的context回包不能恢复旧会话或自动入房', async () => {
+  const f = await fixture(),
+    { result } = await f.login()
+  f.oauth.setContextDelay(100)
+  const pending = f.http('/api/kook/invite/resolve', result.cookie, { instanceId: 'fixture-instance' })
+  await expect.poll(f.oauth.contextCalls).toBe(1)
+  await f.http('/api/logout', result.cookie, {})
+  expect((await pending).status).toBe(401)
+})
+
+test('日志记录OAuth入参、脱敏响应和状态，访问密钥保护，查询不写入自身日志', async () => {
+  const f = await fixture()
+  const { result } = await f.login()
   expect(result.status).toBe(200)
-  expect(result.data.platform).toMatchObject({ instanceId: 'fixture-instance', invitedRoomId: 'ABC234' })
-  const room = await f.http('/api/rooms', result.cookie, {})
-  expect(room.data.room.platformInstanceId).toBe('fixture-instance')
-  expect((await f.http('/api/session', result.cookie)).data.platform.instanceId).toBe('fixture-instance')
+  expect((await f.http('/api/logs')).status).toBe(401)
+  const logs = await f.app.inject({ url: '/api/logs?kind=kook', headers: { 'x-log-key': 'test-log-access-key' } })
+  expect(logs.statusCode).toBe(200)
+  const items = logs.json().items
+  expect(items.length).toBe(2)
+  expect(items.map((item: { stage: string }) => item.stage)).toEqual(['userinfo', 'token'])
+  expect(items[1].request.body.code).toBe('[REDACTED]')
+  expect(items[1].request.body.client_secret).toBe('[REDACTED]')
+  expect(items[1].response.access_token).toBe('[REDACTED]')
+  expect(items[0].status).toBe(200)
+  expect(items[0].durationMs).toBeGreaterThanOrEqual(0)
+  expect(JSON.stringify(items)).not.toContain(f.oauth.config.clientSecret)
 })
 
-test('浏览器不能自报room_id或伪造实例；context拒绝后不签发游戏会话', async () => {
-  const f = await fixture()
-  const tx = await f.start()
-  const code = f.oauth.issue('alice', 'ABC234')
-  const payload = { state: tx.data.state, code }
-  expect((await f.http('/api/kook/login/complete', tx.cookie, { ...payload, room_id: 'OTHER2' })).status).toBe(400)
-  expect(f.oauth.exchanges()).toBe(0)
-  const rejected = await f.http('/api/kook/login/complete', tx.cookie, { ...payload, instanceId: 'foreign-instance' })
-  expect(rejected.status).toBe(502)
-  expect(rejected.cookie).toBe('')
-  expect(rejected.data.details.stage).toBe('context')
-})
-
-test('游戏后端拒绝跨平台实例的房间加入', async () => {
-  const f = await fixture()
-  async function login(player: string, instanceId: string) {
-    const tx = await f.start()
-    return f.http('/api/kook/login/complete', tx.cookie, {
-      state: tx.data.state,
-      code: f.oauth.issue(player, null, instanceId),
-      instanceId,
+test('日志默认最近3天倒序排列，支持稳定分页、KOOK筛选、失败筛选和时间范围', async () => {
+  const f = await fixture(),
+    now = Date.now()
+  async function add(startedAt: number, kind: 'game' | 'kook', ok: boolean, endpoint: string) {
+    await f.repo.saveCallLog({
+      requestId: randomUUID(),
+      kind,
+      method: 'GET',
+      endpoint,
+      startedAt,
+      durationMs: 10,
+      status: ok ? 200 : 502,
+      ok,
+      request: { query: { instance_id: 'one' } },
+      response: { code: ok ? 0 : 'FAILED' },
     })
   }
-  const a = await login('alice', 'instance-a'),
-    b = await login('bob', 'instance-b')
-  expect(a.status).toBe(200)
-  expect(b.status).toBe(200)
-  const room = await f.http('/api/rooms', a.cookie, {})
-  const denied = await f.http('/api/rooms/' + room.data.room.id + '/join', b.cookie, {})
-  expect(denied.status).toBe(403)
-  expect(denied.data.code).toBe('INSTANCE_MISMATCH')
-})
-
-test('取消context查询中的授权事务，迟到的room_id不能创建新会话', async () => {
-  const f = await fixture()
-  f.oauth.setContextDelay(150)
-  const tx = await f.start()
-  const request = f.http('/api/kook/login/complete', tx.cookie, {
-    state: tx.data.state,
-    code: f.oauth.issue('alice', 'ABC234'),
-  })
-  await expect.poll(f.oauth.exchanges).toBe(1)
-  await f.http('/api/kook/login/cancel', tx.cookie, { state: tx.data.state })
-  const result = await request
-  expect(result.status).toBe(401)
-  expect(result.cookie).toBe('')
+  await add(now - 4 * 86400000, 'kook', true, '/old')
+  await add(now - 1000, 'kook', false, '/context')
+  await add(now - 500, 'game', true, '/session')
+  await add(now - 100, 'kook', true, '/userinfo')
+  const query = async (q = '') => {
+    const r = await f.app.inject({
+      url: '/api/logs' + (q ? '?' + q : ''),
+      headers: { 'x-log-key': 'test-log-access-key' },
+    })
+    expect(r.statusCode).toBe(200)
+    return r.json()
+  }
+  const first = await query('limit=2')
+  expect(first.items.map((e: { endpoint: string }) => e.endpoint)).toEqual(['/userinfo', '/session'])
+  expect(first.to - first.from).toBe(3 * 86400000)
+  const p = first.nextCursor
+  const next = await query('limit=2&cursorTime=' + p.startedAt + '&cursorId=' + p.id)
+  expect(next.items.map((e: { endpoint: string }) => e.endpoint)).toEqual(['/context'])
+  expect((await query('kind=kook&errors=true')).items.map((e: { endpoint: string }) => e.endpoint)).toEqual([
+    '/context',
+  ])
+  const from = new Date(now - 5 * 86400000).toISOString(),
+    to = new Date(now - 3 * 86400000).toISOString()
+  expect(
+    (await query('from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to))).items.map(
+      (e: { endpoint: string }) => e.endpoint
+    )
+  ).toEqual(['/old'])
+  expect((await query('search=userinfo')).items.length).toBe(1)
 })

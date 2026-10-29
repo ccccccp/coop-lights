@@ -14,6 +14,8 @@ export async function createMockOAuth() {
   let exchanges = 0
   let delay = 0
   let contextDelay = 0
+  let contextResponse: unknown
+  let contextCalls = 0
   const server = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json')
     res.setHeader('Cache-Control', 'no-store')
@@ -56,12 +58,12 @@ export async function createMockOAuth() {
           url.searchParams.get('instance_id') !== launch.instanceId
         )
           throw new Error('invalid context')
-        tokens.delete(token)
+        contextCalls++
         if (contextDelay) await new Promise((done) => setTimeout(done, contextDelay))
         res.end(
           JSON.stringify({
             code: 0,
-            data: {
+            data: contextResponse ?? {
               game_code: 'lights-sdk-fixture',
               instance_id: launch.instanceId,
               context_type: 4,
@@ -105,6 +107,10 @@ export async function createMockOAuth() {
     exchanges: () => exchanges,
     setDelay(value: number) {
       delay = value
+    },
+    contextCalls: () => contextCalls,
+    setContextResponse(value: unknown) {
+      contextResponse = value
     },
     setContextDelay(value: number) {
       contextDelay = value

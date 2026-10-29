@@ -5,6 +5,7 @@ import type { GameUser, PlatformAdapter, PlatformContext, RoomSnapshot } from '@
 import { PlatformControls } from './components/PlatformControls'
 import { UserAvatar } from './components/UserAvatar'
 
+import { LogPage } from '../LogPage'
 import { ApiError, api } from '../api'
 import { createPlatformAdapter } from '../platform'
 import { useConnection } from '../useConnection'
@@ -22,6 +23,7 @@ function prettyTime(ms: number) {
     .padStart(2, '0')}`
 }
 export function App() {
+  const [showLogs, setShowLogs] = useState(false)
   const [booted, setBooted] = useState(false),
     [user, setUser] = useState<GameUser | null>(null)
   const [room, setRoom] = useState<RoomSnapshot | null>(null),
@@ -165,10 +167,21 @@ export function App() {
       setRoom(result.session.room)
       setPlatform(result.session.platform)
       connection.reconnect()
+      if (result.session.platform.launchSource === 'invite' && current.resolveInvite) {
+        const loggedInGeneration = sessionGeneration.current
+        try {
+          await current.resolveInvite()
+        } catch (error) {
+          if (adapter.current !== current || sessionGeneration.current !== loggedInGeneration) return
+          if (result.session.room) await api.leave(result.session.room.id).catch(() => undefined)
+          setRoom(null)
+          setNotice('已登录，暂时无法加入邀请房间：' + messageOf(error))
+        }
+      }
     })
   }
   const kook = health?.platform.mode === 'kook'
-  const loginAvailable = !!health?.oauthConfigured && !!platform?.availableScopes.includes('profile.basic')
+  const loginAvailable = !!health?.oauthConfigured && !!platform?.availableScopes.includes('get_user_info')
   useEffect(() => {
     const target = platform?.invitedRoomId
     const current = adapter.current
@@ -228,6 +241,11 @@ export function App() {
   }, [booted, kook, loginAvailable, platform?.status, user, busy])
   return (
     <div className="app-shell">
+      {showLogs && (
+        <div className="call-log-overlay" role="dialog" aria-modal="true" aria-label="接口调用日志">
+          <LogPage onClose={() => setShowLogs(false)} />
+        </div>
+      )}
       <header className="topbar">
         <a className="brand" href="/" onClick={(e) => e.preventDefault()}>
           <span className="brand-mark" aria-hidden="true">
@@ -241,6 +259,9 @@ export function App() {
           </span>
         </a>
         <div className="topbar-right">
+          <button className="text-button" onClick={() => setShowLogs(true)}>
+            调用日志
+          </button>
           <span className="mode-pill">{health?.platform.mode === 'kook' ? 'KOOK 模式' : '独立联机'}</span>
           {user && (
             <>
@@ -737,13 +758,7 @@ export function App() {
                   </>
                 )}
                 {kook && platform && adapter.current && (
-                  <PlatformControls
-                    adapter={adapter.current}
-                    platform={platform}
-                    busy={busy}
-                    run={action}
-                    authorize={login}
-                  />
+                  <PlatformControls adapter={adapter.current} platform={platform} busy={busy} run={action} />
                 )}
                 {!kook && <p>独立模式仅使用游戏自己的登录、房间与邀请链接。</p>}
               </div>

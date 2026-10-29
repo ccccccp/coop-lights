@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import type { IncomingMessage } from 'node:http'
 import { resolve } from 'node:path'
@@ -19,9 +19,10 @@ import {
   roomIdSchema,
 } from '@lights/contracts'
 
+import { createCallLogStore, safeRequest } from './callLogs'
 import type { Config } from './config'
 import { GameError, check } from './errors'
-import { LoginTransactions, exchangeKookCode, isOAuthConfigured, platformContext } from './platform'
+import { LoginTransactions, exchangeKookCode, isOAuthConfigured, platformContext, readKookContext } from './platform'
 import { Rooms } from './rooms'
 import type { Repository, Session } from './storage'
 
@@ -39,6 +40,7 @@ function publicUser(u: GameUser) {
 }
 export async function createApp(config: Config, repo: Repository, staticRoot?: string) {
   const app = Fastify({
+    genReqId: () => randomUUID(),
     bodyLimit: 8192,
     ...(config.tls ? { https: config.tls } : {}),
     logger: {
@@ -50,6 +52,13 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   const clients = new Map<string, { ws: WebSocket; id: string; session: Session; alive: boolean }>()
   const tickets = new Map<string, { session: Session; expiresAt: number }>()
   const transactions = new LoginTransactions()
+  const callLogs = createCallLogStore(
+    repo,
+    () => app.log.warn('call log persistence unavailable'),
+    config.logRetentionDays
+  )
+  const grants = new Map<string, { accessToken: string; expiresAt: number; verifiedRoom?: string | null }>()
+  const httpStarts = new WeakMap<object, number>()
   const nonceSchema = z.string().regex(/^[a-f0-9]{64}$/)
   const cookieOptions = {
     path: '/',
@@ -82,7 +91,6 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     const token = requestToken(req)
     const session = token ? await repo.getSession(hash(token)) : null
     check(session, 'UNAUTHENTICATED', '请先进入游戏', 401)
-    if (config.mode === 'kook') check(session.instanceId, 'UNAUTHENTICATED', '请重新授权以校验小游戏实例', 401)
     const user = await repo.getUser(session.userId)
     check(user, 'UNAUTHENTICATED', '登录已失效，请重新进入', 401)
     check(
@@ -96,12 +104,43 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     return { session, user }
   }
   app.addHook('onRequest', async (req) => {
+    httpStarts.set(req, Date.now())
     const origin = req.headers.origin
     if (req.method !== 'GET' && req.method !== 'HEAD')
       check(origin && config.allowedOrigins.includes(origin), 'ORIGIN_DENIED', '请求来源不允许', 403)
   })
   app.addHook('onSend', async (req, reply) => {
     if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store')
+  })
+  app.addHook('onSend', async (req, reply, payload) => {
+    if (!req.url.startsWith('/api/') || req.url.startsWith('/api/logs') || req.url === '/api/health') return
+    const startedAt = httpStarts.get(req) ?? Date.now()
+    let body: unknown = payload
+    if (typeof payload === 'string') {
+      try {
+        body = JSON.parse(payload)
+      } catch {
+        /* 保留文本响应。 */
+      }
+    }
+    const request = safeRequest(req.url, req.body)
+    const businessCode = body && typeof body === 'object' ? (body as { code?: string | number }).code : null
+    await callLogs.record(
+      {
+        requestId: req.id,
+        kind: 'game',
+        method: req.method,
+        endpoint: request.endpoint,
+        startedAt,
+        durationMs: Date.now() - startedAt,
+        status: reply.statusCode,
+        ok: reply.statusCode < 400,
+        businessCode,
+        request: request.request,
+        response: body,
+      },
+      [config.kook.clientSecret, config.logAccessKey]
+    )
   })
   app.setErrorHandler((error, req, reply) => {
     if (error instanceof GameError)
@@ -132,6 +171,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     )
   }
   async function revokeSession(sessionHash: string) {
+    grants.delete(sessionHash)
     const session = await repo.getSession(sessionHash)
     if (session) {
       const active = clients.get(session.userId)
@@ -165,14 +205,16 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       .object({
         state: nonceSchema,
         code: z.string().min(1).max(4096).regex(/^\S+$/),
-        instanceId: z.string().regex(/^[A-Za-z0-9_-]{1,256}$/),
+        instanceId: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{1,256}$/)
+          .optional(),
         clientNonce: nonceSchema.optional(),
       })
       .strict()
       .parse(req.body)
     const transaction = transactions.consume(input.state, loginBinding(req, input.clientNonce))
-    const grant = await exchangeKookCode(config.kook, input.code, input.instanceId)
-    check(grant.launch, 'PLATFORM_CONTEXT_INVALID', '未取得KOOK可信实例上下文', 502)
+    const grant = await exchangeKookCode(config.kook, input.code, callLogs.recorder(req.id))
     transactions.assertActive(transaction)
     const user = await repo.upsertUser(grant.identity)
     transactions.assertActive(transaction)
@@ -181,12 +223,14 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       hash: hash(token),
       userId: user.id,
       expiresAt: Math.min(Date.now() + config.sessionTtlMs, grant.expiresAt),
-      instanceId: grant.launch.instanceId,
+      instanceId: null,
     }
-    // 只保存游戏后端用OAuth凭据向KOOK核验过的实例，不信任浏览器自报绑定。
+    // 基本登录不依赖平台实例查询；OAuth凭据仅在当前游戏后端内存中驻留。
     await repo.saveSession(session)
     transaction.sessionHash = session.hash
+    grants.set(session.hash, { accessToken: grant.accessToken, expiresAt: session.expiresAt })
     if (transaction.cancelled || transaction.expiresAt <= Date.now()) {
+      grants.delete(session.hash)
       await repo.deleteSession(session.hash)
       transactions.assertActive(transaction)
     }
@@ -194,17 +238,13 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     if (old) {
       if (old.userId !== user.id) await revokeSession(old.hash)
       else {
+        grants.delete(old.hash)
         await repo.deleteSession(old.hash)
         const active = clients.get(user.id)
         if (active?.session.hash === old.hash) active.ws.close(4001, 'session renewed')
       }
     }
     transactions.assertActive(transaction)
-    const previousRoom = rooms.forUser(user.id)
-    if (previousRoom && previousRoom.platformInstanceId !== session.instanceId) {
-      await rooms.leave(previousRoom.id, user.id, '切换 KOOK 实例')
-      transactions.assertActive(transaction)
-    }
     await rooms.updateProfile(user)
     transactions.assertActive(transaction)
     reply.header('Cache-Control', 'no-store').setCookie('lights_session', token, {
@@ -215,9 +255,66 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     return {
       user: publicUser(user),
       room: rooms.forUser(user.id),
-      platform: platformContext(config.mode, grant.launch),
+      platform: platformContext(config.mode),
       ...(input.clientNonce ? { gameToken: token } : {}),
     }
+  })
+  app.post('/api/kook/invite/resolve', async (req) => {
+    const { session } = await auth(req)
+    const { instanceId } = z
+      .object({ instanceId: z.string().regex(/^[A-Za-z0-9_-]{1,256}$/) })
+      .strict()
+      .parse(req.body)
+    const grant = grants.get(session.hash)
+    check(grant && grant.expiresAt > Date.now(), 'PLATFORM_GRANT_UNAVAILABLE', '请重新授权后再接受邀请', 401)
+    grant.verifiedRoom = undefined
+    const launch = await readKookContext(config.kook, grant.accessToken, instanceId, callLogs.recorder(req.id))
+    // 查询返回时再次确认游戏会话仍有效，旧结果不能复活已注销的登录。
+    check(await repo.getSession(session.hash), 'UNAUTHENTICATED', '游戏登录已失效', 401)
+    grant.verifiedRoom = launch.invitedRoomId
+    return launch
+  })
+  app.get('/api/logs', async (req) => {
+    check(config.logAccessKey, 'LOGS_NOT_CONFIGURED', '请在服务端配置 LOG_ACCESS_KEY 后查询日志', 503)
+    const supplied = typeof req.headers['x-log-key'] === 'string' ? req.headers['x-log-key'] : ''
+    check(
+      timingSafeEqual(Buffer.from(hash(supplied), 'hex'), Buffer.from(hash(config.logAccessKey), 'hex')),
+      'LOG_ACCESS_DENIED',
+      '日志访问密钥不正确',
+      401
+    )
+    check(repo.listCallLogs, 'LOGS_UNAVAILABLE', '日志查询暂不可用', 503)
+    const query = z
+      .object({
+        from: z.string().optional(),
+        to: z.string().optional(),
+        kind: z.enum(['game', 'kook']).optional(),
+        errors: z.enum(['true', 'false']).optional(),
+        search: z.string().max(200).optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+        cursorTime: z.coerce.number().int().nonnegative().optional(),
+        cursorId: z.string().uuid().optional(),
+      })
+      .strict()
+      .parse(req.query)
+    const to = query.to ? Date.parse(query.to) : Date.now(),
+      from = query.from ? Date.parse(query.from) : to - 3 * 86400000
+    check(Number.isFinite(from) && Number.isFinite(to) && from <= to, 'INVALID_INPUT', '日志时间范围不正确')
+    check((query.cursorTime === undefined) === (query.cursorId === undefined), 'INVALID_INPUT', '日志分页参数不完整')
+    await callLogs.flush()
+    const items = await repo.listCallLogs({
+      from,
+      to,
+      kind: query.kind,
+      errorsOnly: query.errors === 'true',
+      search: query.search,
+      limit: query.limit + 1,
+      ...(query.cursorTime !== undefined ? { cursor: { startedAt: query.cursorTime, id: query.cursorId! } } : {}),
+    })
+    const more = items.length > query.limit,
+      page = items.slice(0, query.limit),
+      last = page[page.length - 1]
+    return { items: page, from, to, nextCursor: more && last ? { startedAt: last.startedAt, id: last.id } : null }
   })
   app.post('/api/kook/login/cancel', async (req) => {
     const { state, clientNonce } = z
@@ -292,7 +389,13 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   app.post<{ Params: { id: string } }>('/api/rooms/:id/join', async (req) => {
     const { user, session } = await auth(req)
     const id = roomIdSchema.parse(req.params.id),
-      room = await rooms.join(id, user, session.instanceId),
+      room = await rooms.join(
+        id,
+        user,
+        grants.get(session.hash)?.verifiedRoom === id
+          ? (rooms.snapshot(id)?.platformInstanceId ?? null)
+          : session.instanceId
+      ),
       c = clients.get(user.id)
     if (c) rooms.connect(user.id, c.id)
     return { room: rooms.snapshot(room.id) }
@@ -420,6 +523,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   const sweep = setInterval(() => {
     const now = Date.now()
     transactions.sweep()
+    for (const [key, grant] of grants) if (grant.expiresAt <= now) grants.delete(key)
     for (const [key, t] of tickets) if (t.expiresAt <= now) tickets.delete(key)
     for (const c of clients.values()) if (c.session.expiresAt <= now) c.ws.close(4001, 'session expired')
     if (now - lastPing >= 15000) {
@@ -442,6 +546,8 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     wss.close()
   })
   app.addHook('onClose', async () => {
+    grants.clear()
+    await callLogs.flush()
     await repo.close()
   })
   if (staticRoot && existsSync(resolve(staticRoot, 'index.html'))) {

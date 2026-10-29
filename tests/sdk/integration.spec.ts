@@ -52,14 +52,12 @@ test('SDK ready 自动授权一次，取消后可手动重试，权限与撤销�
   await expect(game(page).getByTestId('nickname')).toHaveCount(0)
   await login(page)
   await game(page).locator('.test-panel summary').click()
-  await expect(game(page).getByRole('button', { name: '读取好友与私聊', exact: true })).toBeDisabled()
-  await game(page).getByRole('button', { name: '授权好友与私聊', exact: true }).click()
-  await expect(game(page).getByTestId('sdk-scopes')).toContainText('friends.dms.read')
+  await expect(game(page).getByRole('button', { name: '读取好友与私聊', exact: true })).toBeEnabled()
+  await expect(game(page).getByTestId('sdk-scopes')).toContainText('get_user_info')
   await game(page).getByRole('button', { name: '读取好友与私聊', exact: true }).click()
   await expect(game(page).getByTestId('sdk-result')).toContainText('模拟好友第一页')
   await game(page).getByRole('button', { name: '读取下一页', exact: true }).click()
   await expect(game(page).getByTestId('sdk-result')).toContainText('模拟好友第二页')
-  await game(page).getByRole('button', { name: '授权频道成员', exact: true }).click()
   await game(page).getByRole('button', { name: '读取频道成员', exact: true }).click()
   await expect(game(page).getByTestId('sdk-result')).toContainText('模拟频道成员')
   await game(page).getByRole('button', { name: '读取实例参与者', exact: true }).click()
@@ -396,4 +394,48 @@ test('context没有邀请房间时留在主页，不用SDK的roomId代替', asyn
   await expect(game(page).getByTestId('create-room')).toBeEnabled()
   await expect(game(page).getByTestId('room-code')).toHaveValue('')
   expect(joins).toBe(0)
+})
+
+test('普通登录不查context，独立log页按最近3天倒序显示入参、响应和状态', async ({ page }) => {
+  await page.goto('https://localhost:5190/?basic-only')
+  await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家阿青')
+  await page.goto('https://127.0.0.1:5190/log')
+  await expect(page.getByRole('heading', { name: '接口调用日志' })).toBeVisible()
+  const from = await page.getByLabel('开始时间').inputValue()
+  expect(Math.abs(Date.now() - new Date(from).getTime() - 3 * 86400000)).toBeLessThan(10000)
+  await page.getByLabel('日志访问密钥').fill('fixture-log-key')
+  await page.getByLabel('接口来源').selectOption('kook')
+  const response = page.waitForResponse((response) => response.url().includes('/api/logs?'))
+  await page.getByRole('button', { name: '查询 / 刷新' }).click()
+  const result = await (await response).json()
+  expect(result.items.length).toBeGreaterThan(1)
+  const times = result.items.map((item: { startedAt: number }) => item.startedAt)
+  expect(times).toEqual([...times].sort((a, b) => b - a))
+  const latest = result.items[0].requestId
+  expect(
+    result.items
+      .filter((item: { requestId: string }) => item.requestId === latest)
+      .map((item: { stage: string }) => item.stage)
+      .sort()
+  ).toEqual(['token', 'userinfo'])
+  const row = page.locator('tbody tr').filter({ hasText: ' · token' }).first()
+  await row.locator('summary').click()
+  await expect(row).toContainText('200')
+  await expect(row.locator('pre').first()).toContainText('[REDACTED]')
+  await expect(row.locator('pre').nth(1)).toContainText('access_token')
+  await expect(row.locator('pre').nth(1)).toContainText('[REDACTED]')
+})
+
+test('邀请context失败保留基本登录并提示回主页，可在日志页看到失败状态及返回', async ({ page }) => {
+  await page.route('**/api/kook/invite/resolve', (route) =>
+    route.fulfill({
+      status: 502,
+      contentType: 'application/json',
+      body: JSON.stringify({ code: 'PLATFORM_CONTEXT_INVALID', message: '测试实例不匹配' }),
+    })
+  )
+  await page.goto('https://localhost:5190/?player=bob&room=ABC234')
+  await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家小林')
+  await expect(game(page).getByRole('status')).toContainText('已登录，暂时无法加入邀请房间')
+  await expect(game(page).getByTestId('create-room')).toBeEnabled()
 })

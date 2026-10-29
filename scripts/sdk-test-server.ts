@@ -73,6 +73,7 @@ const repo = await new PostgresRepository(base.databaseUrl, schema).init()
 const { app } = await createApp(
   {
     ...base,
+    logAccessKey: 'fixture-log-key',
     mode: 'kook',
     devFaults: false,
     port: 5191,

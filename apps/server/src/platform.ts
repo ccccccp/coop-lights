@@ -4,6 +4,7 @@ import { z } from 'zod'
 
 import { type PlatformContext, roomIdSchema } from '@lights/contracts'
 
+import { type CallRecorder, safeRequest } from './callLogs'
 import type { Config } from './config'
 import { GameError, check } from './errors'
 import type { Identity } from './storage'
@@ -11,7 +12,7 @@ import type { Identity } from './storage'
 export interface VerifiedIdentity {
   identity: Identity
   expiresAt: number
-  launch?: { instanceId: string; invitedRoomId: string | null }
+  accessToken: string
 }
 
 export function isOAuthConfigured(config: Config['kook']): boolean {
@@ -21,8 +22,6 @@ export function isOAuthConfigured(config: Config['kook']): boolean {
     config.redirectUri &&
     config.tokenUrl &&
     config.userInfoUrl &&
-    config.gameCode &&
-    config.contextUrl &&
     config.userIdField
   )
 }
@@ -66,64 +65,111 @@ function publicErrorText(value: unknown, secrets: string[]): string | undefined 
     .slice(0, 512)
 }
 
-async function readResponse(url: string, init: RequestInit, stage: OAuthStage, secrets: string[]) {
-  const address = new URL(endpoint(url))
-  const details = { stage, endpoint: address.origin + address.pathname }
-  const label = stage === 'token' ? 'KOOK 换码' : stage === 'userinfo' ? 'KOOK 用户信息请求' : 'KOOK 实例上下文请求'
-  let response: Response
+async function readResponse(
+  url: string,
+  init: RequestInit,
+  stage: OAuthStage,
+  secrets: string[],
+  record?: CallRecorder
+) {
+  const startedAt = Date.now()
+  let loggedStatus: number | null = null
+  let loggedResponse: unknown = null
+  let loggedCode: string | number | null = null
+  let loggedError: unknown
+  const request = safeRequest(url, init.body)
   try {
-    response = await fetch(address, { ...init, redirect: 'error', signal: AbortSignal.timeout(8000) })
+    const address = new URL(endpoint(url))
+    const details = { stage, endpoint: address.origin + address.pathname }
+    const label = stage === 'token' ? 'KOOK 换码' : stage === 'userinfo' ? 'KOOK 用户信息请求' : 'KOOK 实例上下文请求'
+    let response: Response
+    try {
+      response = await fetch(address, { ...init, redirect: 'error', signal: AbortSignal.timeout(8000) })
+    } catch (error) {
+      const failure = error as { name?: string; cause?: { code?: string }; code?: string }
+      const code = failure?.cause?.code ?? failure?.code
+      const networkCode = ['TimeoutError', 'AbortError'].includes(failure?.name ?? '')
+        ? 'TIMEOUT'
+        : typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code)
+          ? code
+          : 'NETWORK_ERROR'
+      const reason =
+        networkCode === 'TIMEOUT'
+          ? '请求超时'
+          : networkCode === 'ENOTFOUND' || networkCode === 'EAI_AGAIN'
+            ? '域名解析失败'
+            : networkCode === 'ECONNREFUSED'
+              ? '连接被拒绝'
+              : '网络或 TLS 连接失败'
+      throw new GameError('PLATFORM_LOGIN_FAILED', `${label}失败：${reason}（${networkCode}）`, 502, {
+        ...details,
+        network_code: networkCode,
+      })
+    }
+    const responseDetails = { ...details, http_status: response.status }
+    loggedStatus = response.status
+    const responseText = await response.text()
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(responseText)
+    } catch {
+      parsed = undefined
+    }
+    loggedResponse = parsed === undefined ? responseText : parsed
+    loggedCode =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? ((parsed as { code?: string | number; error?: string }).code ?? (parsed as { error?: string }).error ?? null)
+        : null
+    const body =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined
+    // OAuth 错误使用 error/error_description；KOOK 业务错误使用 code/message。
+    const upstreamCode =
+      typeof body?.code === 'number' ? body.code : publicErrorText(body?.code ?? body?.error, secrets)
+    const upstreamMessage = publicErrorText(body?.error_description ?? body?.message, secrets)
+    if (!response.ok || (body && 'code' in body && body.code !== 0) || typeof body?.error === 'string') {
+      const reason = [
+        `HTTP ${response.status}`,
+        upstreamCode,
+        upstreamMessage,
+        parsed === undefined ? '上游响应不是有效 JSON' : undefined,
+      ]
+        .filter((value) => value !== undefined)
+        .join('；')
+      throw new GameError('PLATFORM_LOGIN_FAILED', `${label}失败：${reason}`, 502, {
+        ...responseDetails,
+        ...(upstreamCode !== undefined ? { upstream_code: upstreamCode } : {}),
+        ...(upstreamMessage ? { upstream_message: upstreamMessage } : {}),
+      })
+    }
+    if (!body)
+      throw new GameError('PLATFORM_RESPONSE_INVALID', `${label}响应格式不正确：需要 JSON 对象`, 502, responseDetails)
+    if ('code' in body) {
+      if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data))
+        throw new GameError('PLATFORM_RESPONSE_INVALID', `${label}响应缺少 data 对象`, 502, responseDetails)
+      return { data: body.data as Record<string, unknown>, details: responseDetails }
+    }
+    return { data: body, details: responseDetails }
   } catch (error) {
-    const failure = error as { name?: string; cause?: { code?: string }; code?: string }
-    const code = failure?.cause?.code ?? failure?.code
-    const networkCode = ['TimeoutError', 'AbortError'].includes(failure?.name ?? '')
-      ? 'TIMEOUT'
-      : typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code)
-        ? code
-        : 'NETWORK_ERROR'
-    const reason =
-      networkCode === 'TIMEOUT'
-        ? '请求超时'
-        : networkCode === 'ENOTFOUND' || networkCode === 'EAI_AGAIN'
-          ? '域名解析失败'
-          : networkCode === 'ECONNREFUSED'
-            ? '连接被拒绝'
-            : '网络或 TLS 连接失败'
-    throw new GameError('PLATFORM_LOGIN_FAILED', `${label}失败：${reason}（${networkCode}）`, 502, {
-      ...details,
-      network_code: networkCode,
-    })
+    loggedError = error
+    throw error
+  } finally {
+    await record?.(
+      {
+        stage,
+        method: init.method ?? 'GET',
+        endpoint: request.endpoint,
+        startedAt,
+        durationMs: Date.now() - startedAt,
+        status: loggedStatus,
+        ok: !loggedError,
+        businessCode: loggedCode,
+        request: request.request,
+        response: loggedResponse,
+        error: loggedError,
+      },
+      secrets
+    )
   }
-  const responseDetails = { ...details, http_status: response.status }
-  const parsed: unknown = await response.json().catch(() => undefined)
-  const body =
-    parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined
-  // OAuth 错误使用 error/error_description；KOOK 业务错误使用 code/message。
-  const upstreamCode = typeof body?.code === 'number' ? body.code : publicErrorText(body?.code ?? body?.error, secrets)
-  const upstreamMessage = publicErrorText(body?.error_description ?? body?.message, secrets)
-  if (!response.ok || (body && 'code' in body && body.code !== 0) || typeof body?.error === 'string') {
-    const reason = [
-      `HTTP ${response.status}`,
-      upstreamCode,
-      upstreamMessage,
-      parsed === undefined ? '上游响应不是有效 JSON' : undefined,
-    ]
-      .filter((value) => value !== undefined)
-      .join('；')
-    throw new GameError('PLATFORM_LOGIN_FAILED', `${label}失败：${reason}`, 502, {
-      ...responseDetails,
-      ...(upstreamCode !== undefined ? { upstream_code: upstreamCode } : {}),
-      ...(upstreamMessage ? { upstream_message: upstreamMessage } : {}),
-    })
-  }
-  if (!body)
-    throw new GameError('PLATFORM_RESPONSE_INVALID', `${label}响应格式不正确：需要 JSON 对象`, 502, responseDetails)
-  if ('code' in body) {
-    if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data))
-      throw new GameError('PLATFORM_RESPONSE_INVALID', `${label}响应缺少 data 对象`, 502, responseDetails)
-    return { data: body.data as Record<string, unknown>, details: responseDetails }
-  }
-  return { data: body, details: responseDetails }
 }
 
 function publicAvatarUrl(value: unknown): string | null {
@@ -139,7 +185,7 @@ function publicAvatarUrl(value: unknown): string | null {
 export async function exchangeKookCode(
   config: Config['kook'],
   code: string,
-  instanceId?: string
+  record?: CallRecorder
 ): Promise<VerifiedIdentity> {
   check(isOAuthConfigured(config), 'PLATFORM_NOT_CONFIGURED', '游戏服务端尚未配置 KOOK OAuth', 503)
   const secrets = [config.clientSecret, code]
@@ -157,7 +203,8 @@ export async function exchangeKookCode(
       }),
     },
     'token',
-    secrets
+    secrets,
+    record
   )
   const token = z
     .object({
@@ -180,7 +227,8 @@ export async function exchangeKookCode(
       headers: { Authorization: `Bearer ${token.data.access_token}`, Accept: 'application/json' },
     },
     'userinfo',
-    secrets
+    secrets,
+    record
   )
   const identity = z
     .object({
@@ -195,36 +243,8 @@ export async function exchangeKookCode(
         issue.path[0] === 'openCode' ? config.userIdField : config.userNameField
       ),
     })
-  let launch: VerifiedIdentity['launch']
-  if (instanceId !== undefined) {
-    // instanceId只是查询选择器；身份和游玩资格由KOOK按同一OAuth token复核。
-    check(/^[A-Za-z0-9_-]{1,256}$/.test(instanceId), 'PLATFORM_CONTEXT_INVALID', '小游戏实例参数无效', 400)
-    const url = new URL(endpoint(config.contextUrl))
-    url.searchParams.set('game_code', config.gameCode)
-    url.searchParams.set('instance_id', instanceId)
-    const context = await readResponse(
-      url.href,
-      {
-        headers: { Authorization: `Bearer ${token.data.access_token}`, Accept: 'application/json' },
-      },
-      'context',
-      secrets
-    )
-    // 消费平台当前扁平DTO；不从SDK、URL或浏览器提交的房间号补齐可信字段。
-    const parsed = z
-      .object({
-        game_code: z.literal(config.gameCode),
-        instance_id: z.literal(instanceId),
-        context_type: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
-        context_id: z.string().min(1).max(256),
-        room_id: roomIdSchema.or(z.literal('')).nullish(),
-      })
-      .safeParse(context.data)
-    check(parsed.success, 'PLATFORM_CONTEXT_INVALID', 'KOOK 返回的游戏、实例或邀请房间不匹配', 502)
-    launch = { instanceId: parsed.data.instance_id, invitedRoomId: parsed.data.room_id || null }
-  }
   return {
-    ...(launch ? { launch } : {}),
+    accessToken: token.data.access_token,
     identity: {
       appId: config.clientId,
       ...identity.data,
@@ -232,6 +252,57 @@ export async function exchangeKookCode(
     },
     expiresAt,
   }
+}
+
+/** 受邀进入时单独校验；失败不得撤销已完成的基本登录。 */
+export async function readKookContext(
+  config: Config['kook'],
+  accessToken: string,
+  instanceId: string,
+  record?: CallRecorder
+) {
+  const secrets = [config.clientSecret, accessToken]
+  check(config.contextUrl && config.gameCode, 'PLATFORM_NOT_CONFIGURED', '邀请上下文接口尚未配置', 503)
+  // instanceId只是查询选择器；身份和游玩资格由KOOK按同一OAuth token复核。
+  check(/^[A-Za-z0-9_-]{1,256}$/.test(instanceId), 'PLATFORM_CONTEXT_INVALID', '小游戏实例参数无效', 400)
+  const url = new URL(endpoint(config.contextUrl))
+  url.searchParams.set('game_code', config.gameCode)
+  url.searchParams.set('instance_id', instanceId)
+  const context = await readResponse(
+    url.href,
+    {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+    },
+    'context',
+    secrets,
+    record
+  )
+  // 消费平台当前扁平DTO；不从SDK、URL或浏览器提交的房间号补齐可信字段。
+  const parsed = z
+    .object({
+      game_code: z.literal(config.gameCode),
+      instance_id: z.literal(instanceId),
+      context_type: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+      context_id: z.string().min(1).max(256),
+      room_id: roomIdSchema.or(z.literal('')).nullish(),
+    })
+    .safeParse(context.data)
+  if (!parsed.success) {
+    // 只报告固定字段路径和类型，不回显上游内容、用户资料或OAuth凭据。
+    const fields = ['game_code', 'instance_id', 'context_type', 'context_id', 'room_id', 'instance', 'invite']
+    const receivedTypes = Object.fromEntries(
+      fields.map((field) => {
+        const value = context.data[field]
+        return [field, value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value]
+      })
+    )
+    throw new GameError('PLATFORM_CONTEXT_INVALID', 'KOOK 返回的游戏、实例或邀请房间不匹配', 502, {
+      ...context.details,
+      invalid_fields: [...new Set(parsed.error.issues.map((issue) => issue.path.join('.')))],
+      received_types: receivedTypes,
+    })
+  }
+  return { instanceId: parsed.data.instance_id, invitedRoomId: parsed.data.room_id || null }
 }
 
 interface LoginTransaction {

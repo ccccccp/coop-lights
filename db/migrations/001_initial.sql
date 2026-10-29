@@ -16,6 +16,19 @@ CREATE TABLE IF NOT EXISTS lights_sessions (
   instance_id text
 );
 CREATE INDEX IF NOT EXISTS lights_sessions_expiry ON lights_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS lights_call_logs (
+  id uuid PRIMARY KEY,
+  started_at bigint NOT NULL,
+  kind text NOT NULL,
+  method text NOT NULL,
+  endpoint text NOT NULL,
+  status integer,
+  ok boolean NOT NULL,
+  request_id text NOT NULL,
+  entry jsonb NOT NULL
+);
+CREATE INDEX IF NOT EXISTS lights_call_logs_time ON lights_call_logs(started_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS lights_call_logs_kind_time ON lights_call_logs(kind,started_at DESC);
 CREATE TABLE IF NOT EXISTS lights_rounds (
   round_id uuid PRIMARY KEY,
   room_id text NOT NULL,

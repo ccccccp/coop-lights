@@ -100,8 +100,23 @@ pnpm test:sdk
 
 房间内点击“邀请好友”会调用 npm SDK 的 `ui.openInviteModal({ roomId })`，由 KOOK 的原生邀请弹框选人发送，游戏只显示成功／失败人数。宿主需支持 `ui.openInviteModal`；没有该能力时按钮禁用。
 
-受邀者从 KOOK 接受邀请、启动同一平台实例并完成 OAuth 登录后，游戏后端使用 OAuth token 查询 `/api/v3/mini-game/context`，核对游戏与实例，并读取 `data.room_id`。前端只按这份已核验结果自动加入邀请房间，每次启动仅尝试一次。房间满员或已结束时提示并显示游戏主页；主动离房后不会自动再次加入。房间容量仍由游戏后端串行检查。
+普通打开只进行 OAuth 换码和用户资料读取，不请求 context，也不要求 mini_game.context 权限作为基本登录前置。登录结果成功后立即保留用户身份和主页。
 
-KOOK 后端须部署 `POST /api/v3/mini-game/invite-send`，并在受邀用户的 context 响应中返回 `room_id`。宿主仍可通过 connected 的邀请字段提供 SDK 展示上下文，点灯自动入房使用游戏后端直接查询的 context 结果。文字／语音来源仍须具备创建频道邀请权限，不能降级到私信。平台实例满员可能在游戏启动前由 KOOK 拦截；游戏房间满员由本项目显示主页。真实 Web、PC、多账号投递仍需联调。
+受邀启动（SDK launchSource=invite）登录成功后，另行调用游戏后端 POST /api/kook/invite/resolve。后端使用仅驻留内存的 OAuth token 查询 KOOK /api/v3/mini-game/context，核对游戏／实例并读取 data.room_id；成功才自动加入房间。查询失败提示原因并保留登录与主页；房间满员或已结束时同样回主页。主动离房不会重复自动入房。
 
-当前游戏后端已将 context 确认的 `instance_id` 绑定到游戏会话，建房和加入均使用该绑定，拒绝跨实例加入。`ready.instanceId` 只作为查询选择器；游戏编号使用后端 `KOOK_GAME_CODE`（点灯默认为 `751wtNQveFXjlVoZ`）。context 默认与 `KOOK_USERINFO_URL` 同源，也可设置 `KOOK_CONTEXT_URL`。`data.room_id` 为空时显示主页，不回退使用 SDK、URL 或浏览器提交的房间号；接口失败或实例不匹配时不建立登录会话。KOOK 授权必须包含 `mini_game.context`，OAuth token 始终留在后端。
+KOOK 后端须部署 POST /api/v3/mini-game/invite-send 和 context 接口，邀请核验需要 mini_game.context 授权；上下文格式错误只影响接受邀请。普通房间继续使用游戏身份和六位房间号，平台实例 ID 不再是基本登录或游玩的必经校验；服务器内存中保存核验成功的邀请目标，不以浏览器 roomId 自报作为邀请依据。重启后接受邀请可能需要重新授权，已有基本登录不受影响。
+
+## 接口调用日志
+
+访问 /log（例如 https://cp-coop-lights.vanillacake.cn/log），或点击游戏右上角“调用日志”。部署前执行 pnpm db:migrate，在服务端环境变量配置 LOG_ACCESS_KEY，重启游戏服务后用同一访问密钥查询。密钥仅在日志页面内存驻留，不写入 URL、浏览器存储或日志。
+
+默认查询最近 3 天（72 小时），按调用开始时间倒序，最新在前。可按时间范围、KOOK／游戏接口、失败记录以及接口／请求编号筛选，并加载更早记录。详情包含方法、接口地址、入参、返回、HTTP 状态码、业务码、耗时、错误和请求关联编号。KOOK 换码、用户信息、context 请求均记录在游戏后端；失败登录也能通过日志查询，不要求先登录游戏。
+
+日志在 PostgreSQL 的 lights_call_logs 表持久化，默认保留 7 天，可通过 LOG_RETENTION_DAYS 设置（3～90天）。日志查询本身和健康检查不写调用记录。记录入库前屏蔽授权码、state、nonce、OAuth token、Cookie、游戏会话与应用密钥，保留定位问题所需的字段结构；超长字符串／数组／深层对象有大小限制。日志写入失败不使游戏请求报错。
+
+配置示例：
+
+```dotenv
+LOG_ACCESS_KEY=请设置独立的随机访问密钥
+LOG_RETENTION_DAYS=7
+```

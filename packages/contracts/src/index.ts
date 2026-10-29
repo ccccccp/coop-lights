@@ -75,6 +75,7 @@ export interface PlatformContext {
   connectionState: string
   epoch: number
   invitedRoomId: string | null
+  launchSource?: string
   participantsRevision: number | null
   message: string
 }
@@ -105,6 +106,7 @@ export interface PlatformAdapter {
     scopes?: string[]
   ): Promise<{ status: 'logged_in'; session: SessionResponse } | { status: 'cancelled' }>
   logout(): Promise<void>
+  resolveInvite?(): Promise<void>
   invite(
     roomId: string
   ): Promise<{ status: 'submitted' | 'cancelled'; sentCount?: number; failedCount?: number; url?: string }>

@@ -1,0 +1,126 @@
+.call-log-page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 36px 24px 64px;
+  color: #ecf3eb;
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  h1 {
+    margin: 0 0 12px;
+    font-size: 30px;
+  }
+  p {
+    color: #adbcad;
+  }
+  form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+    padding: 20px;
+    border: 1px solid #2b3933;
+    border-radius: 12px;
+    margin: 20px 0;
+  }
+  label {
+    flex: 1 1 210px;
+    margin: 0;
+  }
+  input,
+  select {
+    margin-top: 8px;
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid #3b4d40;
+    border-radius: 8px;
+    background: #101b17;
+    color: #ecf3eb;
+    font: inherit;
+  }
+  .log-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+    padding-bottom: 12px;
+  }
+  .log-checkbox input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+  }
+  .log-table-wrap {
+    overflow-x: auto;
+    border: 1px solid #2b3933;
+    border-radius: 10px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 760px;
+    font-size: 13px;
+  }
+  th,
+  td {
+    padding: 14px 12px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid #2b3933;
+    line-height: 1.7;
+  }
+  th {
+    background: #1a2923;
+    color: #adbcad;
+  }
+  td:nth-child(2) {
+    max-width: 360px;
+    overflow-wrap: anywhere;
+  }
+  td:last-child {
+    width: 40%;
+  }
+  summary {
+    cursor: pointer;
+    color: #c7ee8b;
+  }
+  h3 {
+    margin: 14px 0 8px;
+    font-size: 13px;
+  }
+  pre {
+    margin: 0;
+    max-height: 360px;
+    overflow: auto;
+    padding: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #0b1511;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .log-ok {
+    color: #c7ee8b;
+  }
+  .log-error {
+    color: #ffab9e;
+  }
+  .log-source {
+    font-size: 12px;
+    color: #adbcad;
+  }
+  .log-empty {
+    padding: 28px 0;
+  }
+}
+.call-log-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  overflow: auto;
+  background: #101a19;
+}
