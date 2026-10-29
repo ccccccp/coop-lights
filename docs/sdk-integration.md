@@ -33,22 +33,20 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 复制 `.env.example` 为 `.env`，根据实际平台应用配置填写：
 
-| 配置                   | 用途                                                                        |
-| ---------------------- | --------------------------------------------------------------------------- |
-| `APP_MODE=kook`        | 启用 KOOK 模式，关闭昵称登录和开发作弊接口                                  |
-| `KOOK_CLIENT_ID`       | OAuth 应用标识，也是游戏账号隔离维度                                        |
-| `KOOK_CLIENT_SECRET`   | 仅游戏后端持有的应用密钥                                                    |
-| `KOOK_REDIRECT_URI`    | 与平台发放授权码时一致的回调地址                                            |
-| `KOOK_TOKEN_URL`       | 实际授权码交换接口                                                          |
-| `KOOK_GAME_CODE`       | 游戏对外编号，点灯默认为 `751wtNQveFXjlVoZ`                                 |
-| `KOOK_CONTEXT_URL`     | 可选 context 完整 URL，默认与用户信息接口同源的 `/api/v3/mini-game/context` |
-| `KOOK_USERINFO_URL`    | 实际用户信息接口                                                            |
-| `KOOK_USER_ID_FIELD`   | 明确选择响应中的稳定身份字段：`user_open_code`、`user_code` 或 `id`         |
-| `KOOK_USER_NAME_FIELD` | 昵称字段：`username`（默认）或 `nickname`                                   |
-| `ALLOWED_GAME_ORIGINS` | 允许请求 API / WebSocket 的游戏页面来源，多个用逗号分隔                     |
-| `DATABASE_URL`         | 游戏专用 PostgreSQL；留空时使用本地配置文件                                 |
+| 配置                   | 用途                                                                     |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `APP_MODE=kook`        | 启用 KOOK 模式，关闭昵称登录和开发作弊接口                               |
+| `KOOK_CLIENT_ID`       | OAuth 应用标识，也是游戏账号隔离维度                                     |
+| `KOOK_CLIENT_SECRET`   | 仅游戏后端持有的应用密钥                                                 |
+| `KOOK_REDIRECT_URI`    | 与平台发放授权码时一致的回调地址                                         |
+| `KOOK_API_ORIGIN`      | 可选 KOOK 服务 origin，默认 `https://www.kookapp.cn`；测试环境只修改此项 |
+| `KOOK_GAME_CODE`       | 游戏对外编号，点灯默认为 `751wtNQveFXjlVoZ`                              |
+| `ALLOWED_GAME_ORIGINS` | 允许请求 API / WebSocket 的游戏页面来源，多个用逗号分隔                  |
+| `DATABASE_URL`         | 游戏专用 PostgreSQL；留空时使用本地配置文件                              |
 
-端点不预填猜测值。当前交换适配器发送 `application/x-www-form-urlencoded` 的 `grant_type=authorization_code`、`client_id`、`client_secret`、`redirect_uri`、`code`，要求 token 响应含 `access_token`、Bearer `token_type`、秒数 `expires_in`；然后用 Bearer token GET 用户信息。支持直接 JSON 对象或 `{ code: 0, data: ... }` 包装。实际平台若采用其他认证方式或响应结构，需要调整 `apps/server/src/platform.ts` 的交换适配器。
+接口路径固定为 `/api/oauth2/token`、`/api/v3/user/me` 和 `/api/v3/mini-game/context`，均由 `KOOK_API_ORIGIN` 拼接；origin 仅填写 `https://域名[:端口]`，不带路径或末尾 `/`。不再读取 `KOOK_TOKEN_URL`、`KOOK_USERINFO_URL`、`KOOK_CONTEXT_URL`。用户资料固定以 `id` 作为账号标识、`username` 作为显示名，不再配置字段名。
+
+当前交换适配器发送 `application/x-www-form-urlencoded` 的 `grant_type=authorization_code`、`client_id`、`client_secret`、`redirect_uri`、`code`，要求 token 响应含 `access_token`、Bearer `token_type`、秒数 `expires_in`；然后用 Bearer token GET 用户信息。支持直接 JSON 对象或 `{ code: 0, data: ... }` 包装。本地模拟宿主使用进程内测试地址，不依赖真实 KOOK 凭证。
 
 生产端点要求 HTTPS；仅允许 loopback HTTP 用于本地模拟。游戏页面需要 HTTPS，保留跨站 iframe 的 `Secure; HttpOnly; SameSite=None; Partitioned` 会话 Cookie，并兼容完全禁用第三方 Cookie 的环境。部署时保持游戏 API 与游戏页面同源，并为 `/ws` 转发 WebSocket Upgrade。`WEB_HTTPS=true` 启用 Vite 原生 HTTPS；`SERVER_HTTPS=true` 启用游戏后端原生 HTTPS，二者使用 `GAME_TLS_CERT/GAME_TLS_KEY`。静态生产构建不读取证书；HTTPS 代理保持证书与主机名校验。
 
@@ -104,7 +102,7 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 ## OAuth 用户资料与房间头像
 
-游戏后端只从 OAuth 用户信息响应读取用户名和头像，客户端不能提交或覆盖这些身份资料。nickname 保持现有 API 字段名，承载 KOOK 用户名；新增可空的 avatarUrl 从 avatar／avatarUrl／avatar_url 读取有效 HTTPS 地址。头像不可用时不阻断登录。
+游戏后端只从 OAuth 用户信息响应读取 `id`、`username` 和头像，客户端不能提交或覆盖这些身份资料。内部 `openCode` 字段保存 KOOK `id`，`nickname` 保持现有 API 字段名，承载 KOOK `username`；新增可空的 avatarUrl 从 avatar／avatarUrl／avatar_url 读取有效 HTTPS 地址。头像不可用时不阻断登录。
 
 用户资料保存于 lights_users.avatar_url，房间玩家快照同步 avatarUrl；重新授权更新资料时广播给同房间玩家。迁移脚本幂等补充头像列，不改变应用命名空间、用户标识、会话协议或累计成绩。已有数据库执行 pnpm db:migrate 后再启动服务。
 

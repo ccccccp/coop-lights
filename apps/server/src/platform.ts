@@ -16,14 +16,7 @@ export interface VerifiedIdentity {
 }
 
 export function isOAuthConfigured(config: Config['kook']): boolean {
-  return Boolean(
-    config.clientId &&
-    config.clientSecret &&
-    config.redirectUri &&
-    config.tokenUrl &&
-    config.userInfoUrl &&
-    config.userIdField
-  )
+  return Boolean(config.clientId && config.clientSecret && config.redirectUri && config.tokenUrl && config.userInfoUrl)
 }
 
 function endpoint(value: string): string {
@@ -230,18 +223,17 @@ export async function exchangeKookCode(
     secrets,
     record
   )
+  // KOOK /api/v3/user/me 的身份字段固定为 id，显示名固定为 username。
   const identity = z
     .object({
       openCode: z.string().trim().min(1).max(256),
       nickname: z.string().trim().min(1).max(100),
     })
-    .safeParse({ openCode: profile.data[config.userIdField!], nickname: profile.data[config.userNameField] })
+    .safeParse({ openCode: profile.data.id, nickname: profile.data.username })
   if (!identity.success)
-    throw new GameError('PLATFORM_RESPONSE_INVALID', 'KOOK 用户身份字段与配置不一致', 502, {
+    throw new GameError('PLATFORM_RESPONSE_INVALID', 'KOOK 用户资料的 id 或 username 字段无效', 502, {
       ...profile.details,
-      invalid_fields: identity.error.issues.map((issue) =>
-        issue.path[0] === 'openCode' ? config.userIdField : config.userNameField
-      ),
+      invalid_fields: identity.error.issues.map((issue) => (issue.path[0] === 'openCode' ? 'id' : 'username')),
     })
   return {
     accessToken: token.data.access_token,

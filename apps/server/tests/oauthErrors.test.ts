@@ -12,8 +12,6 @@ const config: Config['kook'] = {
   userInfoUrl: 'https://kook.test/api/v3/user/me',
   gameCode: 'lights-sdk-fixture',
   contextUrl: 'https://kook.test/api/v3/mini-game/context',
-  userIdField: 'id',
-  userNameField: 'username',
 }
 const code = 'private-authorization-code'
 const accessToken = 'private-access-token'
@@ -139,7 +137,7 @@ test('换码响应格式错误只公开错误字段名', async () => {
   expect(JSON.stringify(error)).not.toContain(accessToken)
 })
 
-test('用户资料字段错误返回配置中的实际字段名', async () => {
+test('用户资料字段错误返回固定的 KOOK 字段名', async () => {
   vi.stubGlobal(
     'fetch',
     vi
@@ -165,7 +163,14 @@ test('成功换码和用户资料解析保持原有行为', async () => {
       .mockResolvedValueOnce(
         Response.json({
           code: 0,
-          data: { id: 'user-1', username: '玩家', avatar: 'https://cdn.test/avatar.png' },
+          data: {
+            id: 'user-1',
+            username: '玩家',
+            user_open_code: 'other-open-code',
+            user_code: 'other-user-code',
+            nickname: '其他显示名',
+            avatar: 'https://cdn.test/avatar.png',
+          },
         })
       )
   )

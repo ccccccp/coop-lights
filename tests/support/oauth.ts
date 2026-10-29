@@ -3,8 +3,8 @@ import { createServer } from 'node:http'
 
 export async function createMockOAuth() {
   const accounts = {
-    alice: { user_open_code: 'fixture-alice', username: '模拟玩家阿青', avatar: 'https://avatars.test/alice.svg' },
-    bob: { user_open_code: 'fixture-bob', username: '模拟玩家小林', avatar: 'https://avatars.test/bob.svg' },
+    alice: { id: 'fixture-alice', username: '模拟玩家阿青', avatar: 'https://avatars.test/alice.svg' },
+    bob: { id: 'fixture-bob', username: '模拟玩家小林', avatar: 'https://avatars.test/bob.svg' },
   }
   type Account = (typeof accounts)[keyof typeof accounts]
   type Launch = { instanceId: string; roomId: string | null }
@@ -99,8 +99,6 @@ export async function createMockOAuth() {
       userInfoUrl: `http://127.0.0.1:${port}/userinfo`,
       gameCode: 'lights-sdk-fixture',
       contextUrl: `http://127.0.0.1:${port}/api/v3/mini-game/context`,
-      userIdField: 'user_open_code' as const,
-      userNameField: 'username' as const,
     },
     issue(player: string, roomId: string | null = null, instanceId = 'fixture-instance') {
       if (player !== 'alice' && player !== 'bob') throw new Error('Unknown fixture player')

@@ -16,9 +16,6 @@ const envSchema = z.object({
   GAME_TLS_CERT: z.string().default(''),
   GAME_TLS_KEY: z.string().default(''),
   SERVER_PORT: z.coerce.number().int().min(1).max(65535).default(5188),
-  GAME_MAX_PLAYERS: z.coerce.number().int().min(1).max(4).default(4),
-  GAME_RECONNECT_GRACE_MS: z.coerce.number().int().min(100).default(60000),
-  GAME_SESSION_TTL_MS: z.coerce.number().int().min(1000).default(604800000),
   ENABLE_DEV_FAULTS: z.enum(['true', 'false']).default('true'),
   ALLOWED_GAME_ORIGINS: z
     .string()
@@ -29,15 +26,21 @@ const envSchema = z.object({
   KOOK_CLIENT_ID: z.string().default(''),
   KOOK_CLIENT_SECRET: z.string().default(''),
   KOOK_REDIRECT_URI: z.string().default(''),
-  KOOK_TOKEN_URL: z.string().default(''),
-  KOOK_USERINFO_URL: z.string().default(''),
+  KOOK_API_ORIGIN: z
+    .string()
+    .refine((value) => {
+      try {
+        const url = new URL(value)
+        return url.protocol === 'https:' && url.origin === value
+      } catch {
+        return false
+      }
+    }, 'KOOK_API_ORIGIN 必须是 HTTPS origin，不含路径、查询参数或末尾斜杠')
+    .default('https://www.kookapp.cn'),
   KOOK_GAME_CODE: z
     .string()
     .regex(/^[A-Za-z0-9_-]{1,32}$/)
     .default('751wtNQveFXjlVoZ'),
-  KOOK_CONTEXT_URL: z.string().default(''),
-  KOOK_USER_ID_FIELD: z.enum(['user_open_code', 'user_code', 'id']).optional(),
-  KOOK_USER_NAME_FIELD: z.enum(['username', 'nickname']).default('username'),
 })
 export function getConfig() {
   const e = envSchema.parse(process.env)
@@ -49,9 +52,10 @@ export function getConfig() {
     mode: e.APP_MODE,
     host: e.SERVER_HOST,
     port: e.SERVER_PORT,
-    maxPlayers: e.GAME_MAX_PLAYERS,
-    graceMs: e.GAME_RECONNECT_GRACE_MS,
-    sessionTtlMs: e.GAME_SESSION_TTL_MS,
+    // 点灯规则固定：最多 4 人，断线保留 60 秒，游戏会话最长 7 天。
+    maxPlayers: 4,
+    graceMs: 60000,
+    sessionTtlMs: 604800000,
     devFaults: e.ENABLE_DEV_FAULTS === 'true' && e.APP_MODE === 'standalone' && process.env.NODE_ENV !== 'production',
     allowedOrigins: e.ALLOWED_GAME_ORIGINS.split(',').map((x) => new URL(x.trim()).origin),
     databaseUrl,
@@ -62,14 +66,11 @@ export function getConfig() {
       clientId: e.KOOK_CLIENT_ID,
       clientSecret: e.KOOK_CLIENT_SECRET,
       redirectUri: e.KOOK_REDIRECT_URI,
-      tokenUrl: e.KOOK_TOKEN_URL,
-      userInfoUrl: e.KOOK_USERINFO_URL,
+      // KOOK 接口路径固定，切换正式／测试环境只需替换服务 origin。
+      tokenUrl: new URL('/api/oauth2/token', e.KOOK_API_ORIGIN).href,
+      userInfoUrl: new URL('/api/v3/user/me', e.KOOK_API_ORIGIN).href,
       gameCode: e.KOOK_GAME_CODE,
-      contextUrl:
-        e.KOOK_CONTEXT_URL ||
-        (e.KOOK_USERINFO_URL ? new URL('/api/v3/mini-game/context', e.KOOK_USERINFO_URL).href : ''),
-      userIdField: e.KOOK_USER_ID_FIELD,
-      userNameField: e.KOOK_USER_NAME_FIELD,
+      contextUrl: new URL('/api/v3/mini-game/context', e.KOOK_API_ORIGIN).href,
     },
   }
 }

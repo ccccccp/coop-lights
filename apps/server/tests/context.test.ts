@@ -9,8 +9,6 @@ const config: Config['kook'] = {
   redirectUri: 'https://game.test/',
   tokenUrl: 'https://kook.test/api/oauth2/token',
   userInfoUrl: 'https://kook.test/api/v3/user/me',
-  userIdField: 'id',
-  userNameField: 'username',
   gameCode: 'lights-sdk-fixture',
   contextUrl: 'https://kook.test/api/v3/mini-game/context',
 }

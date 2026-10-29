@@ -34,6 +34,8 @@ pnpm db:setup
 
 本机已有的 `.env`、数据库配置和证书沿用当前项目设置。勿提交本地数据库凭证、`.env` 或证书。
 
+新环境复制 `.env.example` 为 `.env`，按注释填写；可选项已注释，省略时使用代码默认值。KOOK 接口共用 `KOOK_API_ORIGIN`（默认 `https://www.kookapp.cn`），用户身份固定读取 `id`，用户名固定读取 `username`。端口、HTTPS、宿主来源和数据库按实际部署设置；4 人上限、60 秒断线宽限和 7 天会话期限固定在代码中。
+
 已有数据库时，在 `.env` 配置专用 `DATABASE_URL` 并执行 `pnpm db:migrate`。原生 PostgreSQL 的 `db:setup` / `db:stop` 入口也保留；请先配置实际 `PG_BIN` 路径，勿与 Docker 初始化方式混用。
 
 ## 原生 HTTPS 联调
