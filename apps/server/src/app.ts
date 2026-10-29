@@ -82,6 +82,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     const token = requestToken(req)
     const session = token ? await repo.getSession(hash(token)) : null
     check(session, 'UNAUTHENTICATED', '请先进入游戏', 401)
+    if (config.mode === 'kook') check(session.instanceId, 'UNAUTHENTICATED', '请重新授权以校验小游戏实例', 401)
     const user = await repo.getUser(session.userId)
     check(user, 'UNAUTHENTICATED', '登录已失效，请重新进入', 401)
     check(
@@ -164,12 +165,14 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       .object({
         state: nonceSchema,
         code: z.string().min(1).max(4096).regex(/^\S+$/),
+        instanceId: z.string().regex(/^[A-Za-z0-9_-]{1,256}$/),
         clientNonce: nonceSchema.optional(),
       })
       .strict()
       .parse(req.body)
     const transaction = transactions.consume(input.state, loginBinding(req, input.clientNonce))
-    const grant = await exchangeKookCode(config.kook, input.code)
+    const grant = await exchangeKookCode(config.kook, input.code, input.instanceId)
+    check(grant.launch, 'PLATFORM_CONTEXT_INVALID', '未取得KOOK可信实例上下文', 502)
     transactions.assertActive(transaction)
     const user = await repo.upsertUser(grant.identity)
     transactions.assertActive(transaction)
@@ -178,9 +181,9 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       hash: hash(token),
       userId: user.id,
       expiresAt: Math.min(Date.now() + config.sessionTtlMs, grant.expiresAt),
-      instanceId: null,
+      instanceId: grant.launch.instanceId,
     }
-    // ready().instanceId is display metadata, never a game-server authorization credential.
+    // 只保存游戏后端用OAuth凭据向KOOK核验过的实例，不信任浏览器自报绑定。
     await repo.saveSession(session)
     transaction.sessionHash = session.hash
     if (transaction.cancelled || transaction.expiresAt <= Date.now()) {
@@ -197,6 +200,11 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       }
     }
     transactions.assertActive(transaction)
+    const previousRoom = rooms.forUser(user.id)
+    if (previousRoom && previousRoom.platformInstanceId !== session.instanceId) {
+      await rooms.leave(previousRoom.id, user.id, '切换 KOOK 实例')
+      transactions.assertActive(transaction)
+    }
     await rooms.updateProfile(user)
     transactions.assertActive(transaction)
     reply.header('Cache-Control', 'no-store').setCookie('lights_session', token, {
@@ -207,7 +215,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     return {
       user: publicUser(user),
       room: rooms.forUser(user.id),
-      platform: platformContext(config.mode),
+      platform: platformContext(config.mode, grant.launch),
       ...(input.clientNonce ? { gameToken: token } : {}),
     }
   })
@@ -259,11 +267,11 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     }
   })
   app.get('/api/session', async (req) => {
-    const { user } = await auth(req)
+    const { user, session } = await auth(req)
     return {
       user: publicUser(user),
       room: rooms.forUser(user.id),
-      platform: platformContext(config.mode),
+      platform: platformContext(config.mode, { instanceId: session.instanceId }),
     }
   })
   app.post('/api/logout', async (req, reply) => {

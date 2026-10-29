@@ -125,7 +125,8 @@ const server = createServer({ key: await readFile(key), cert: await readFile(cer
         const data = JSON.parse(body)
         res.setHeader('Content-Type', 'application/json')
         res.setHeader('Cache-Control', 'no-store')
-        if (url.pathname === '/mock/code') res.end(JSON.stringify({ code: oauth.issue(data.player) }))
+        if (url.pathname === '/mock/code')
+          res.end(JSON.stringify({ code: oauth.issue(data.player, data.roomId ?? null) }))
         else {
           if (
             data.hostOrigin !== 'https://localhost:5190' ||

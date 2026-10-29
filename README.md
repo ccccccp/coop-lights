@@ -95,3 +95,13 @@ pnpm test:sdk
 - 独立模式浏览器测试使用游戏数据库的默认 schema，产生自测账号与通关记录。截图及失败追踪在 `test-results/`；SDK 截图及失败追踪在 `.sdk-test/results/`。
 
 `docs/platform-contract.md`、`docs/development-status.md`、`docs/test-scenarios.md` 和 `DEVELOPMENT_PLAN.md` 保留 2026-10-12 之前的归档快照；本次 SDK 接入以本 README 和 [SDK 接入说明](docs/sdk-integration.md) 为准。
+
+## KOOK 实例邀请
+
+房间内点击“邀请好友”会调用 npm SDK 的 `ui.openInviteModal({ roomId })`，由 KOOK 的原生邀请弹框选人发送，游戏只显示成功／失败人数。宿主需支持 `ui.openInviteModal`；没有该能力时按钮禁用。
+
+受邀者从 KOOK 接受邀请、启动同一平台实例并完成 OAuth 登录后，游戏后端使用 OAuth token 查询 `/api/v3/mini-game/context`，核对游戏与实例，并读取 `data.room_id`。前端只按这份已核验结果自动加入邀请房间，每次启动仅尝试一次。房间满员或已结束时提示并显示游戏主页；主动离房后不会自动再次加入。房间容量仍由游戏后端串行检查。
+
+KOOK 后端须部署 `POST /api/v3/mini-game/invite-send`，并在受邀用户的 context 响应中返回 `room_id`。宿主仍可通过 connected 的邀请字段提供 SDK 展示上下文，点灯自动入房使用游戏后端直接查询的 context 结果。文字／语音来源仍须具备创建频道邀请权限，不能降级到私信。平台实例满员可能在游戏启动前由 KOOK 拦截；游戏房间满员由本项目显示主页。真实 Web、PC、多账号投递仍需联调。
+
+当前游戏后端已将 context 确认的 `instance_id` 绑定到游戏会话，建房和加入均使用该绑定，拒绝跨实例加入。`ready.instanceId` 只作为查询选择器；游戏编号使用后端 `KOOK_GAME_CODE`（点灯默认为 `751wtNQveFXjlVoZ`）。context 默认与 `KOOK_USERINFO_URL` 同源，也可设置 `KOOK_CONTEXT_URL`。`data.room_id` 为空时显示主页，不回退使用 SDK、URL 或浏览器提交的房间号；接口失败或实例不匹配时不建立登录会话。KOOK 授权必须包含 `mini_game.context`，OAuth token 始终留在后端。

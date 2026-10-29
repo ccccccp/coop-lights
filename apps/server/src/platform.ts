@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 
 import { z } from 'zod'
 
-import type { PlatformContext } from '@lights/contracts'
+import { type PlatformContext, roomIdSchema } from '@lights/contracts'
 
 import type { Config } from './config'
 import { GameError, check } from './errors'
@@ -11,6 +11,7 @@ import type { Identity } from './storage'
 export interface VerifiedIdentity {
   identity: Identity
   expiresAt: number
+  launch?: { instanceId: string; invitedRoomId: string | null }
 }
 
 export function isOAuthConfigured(config: Config['kook']): boolean {
@@ -20,6 +21,8 @@ export function isOAuthConfigured(config: Config['kook']): boolean {
     config.redirectUri &&
     config.tokenUrl &&
     config.userInfoUrl &&
+    config.gameCode &&
+    config.contextUrl &&
     config.userIdField
   )
 }
@@ -44,7 +47,7 @@ function endpoint(value: string): string {
   return url.href
 }
 
-type OAuthStage = 'token' | 'userinfo'
+type OAuthStage = 'token' | 'userinfo' | 'context'
 
 // 仅公开上游的错误字段；脱敏后再截断，避免将请求凭证带回浏览器。
 function publicErrorText(value: unknown, secrets: string[]): string | undefined {
@@ -66,7 +69,7 @@ function publicErrorText(value: unknown, secrets: string[]): string | undefined 
 async function readResponse(url: string, init: RequestInit, stage: OAuthStage, secrets: string[]) {
   const address = new URL(endpoint(url))
   const details = { stage, endpoint: address.origin + address.pathname }
-  const label = stage === 'token' ? 'KOOK 换码' : 'KOOK 用户信息请求'
+  const label = stage === 'token' ? 'KOOK 换码' : stage === 'userinfo' ? 'KOOK 用户信息请求' : 'KOOK 实例上下文请求'
   let response: Response
   try {
     response = await fetch(address, { ...init, redirect: 'error', signal: AbortSignal.timeout(8000) })
@@ -133,7 +136,11 @@ function publicAvatarUrl(value: unknown): string | null {
   }
 }
 
-export async function exchangeKookCode(config: Config['kook'], code: string): Promise<VerifiedIdentity> {
+export async function exchangeKookCode(
+  config: Config['kook'],
+  code: string,
+  instanceId?: string
+): Promise<VerifiedIdentity> {
   check(isOAuthConfigured(config), 'PLATFORM_NOT_CONFIGURED', '游戏服务端尚未配置 KOOK OAuth', 503)
   const secrets = [config.clientSecret, code]
   const received = await readResponse(
@@ -188,7 +195,36 @@ export async function exchangeKookCode(config: Config['kook'], code: string): Pr
         issue.path[0] === 'openCode' ? config.userIdField : config.userNameField
       ),
     })
+  let launch: VerifiedIdentity['launch']
+  if (instanceId !== undefined) {
+    // instanceId只是查询选择器；身份和游玩资格由KOOK按同一OAuth token复核。
+    check(/^[A-Za-z0-9_-]{1,256}$/.test(instanceId), 'PLATFORM_CONTEXT_INVALID', '小游戏实例参数无效', 400)
+    const url = new URL(endpoint(config.contextUrl))
+    url.searchParams.set('game_code', config.gameCode)
+    url.searchParams.set('instance_id', instanceId)
+    const context = await readResponse(
+      url.href,
+      {
+        headers: { Authorization: `Bearer ${token.data.access_token}`, Accept: 'application/json' },
+      },
+      'context',
+      secrets
+    )
+    // 消费平台当前扁平DTO；不从SDK、URL或浏览器提交的房间号补齐可信字段。
+    const parsed = z
+      .object({
+        game_code: z.literal(config.gameCode),
+        instance_id: z.literal(instanceId),
+        context_type: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+        context_id: z.string().min(1).max(256),
+        room_id: roomIdSchema.or(z.literal('')).nullish(),
+      })
+      .safeParse(context.data)
+    check(parsed.success, 'PLATFORM_CONTEXT_INVALID', 'KOOK 返回的游戏、实例或邀请房间不匹配', 502)
+    launch = { instanceId: parsed.data.instance_id, invitedRoomId: parsed.data.room_id || null }
+  }
   return {
+    ...(launch ? { launch } : {}),
     identity: {
       appId: config.clientId,
       ...identity.data,
@@ -249,17 +285,20 @@ export class LoginTransactions {
   }
 }
 
-export function platformContext(mode: 'standalone' | 'kook'): PlatformContext {
+export function platformContext(
+  mode: 'standalone' | 'kook',
+  launch?: { instanceId: string | null; invitedRoomId?: string | null }
+): PlatformContext {
   return {
     mode,
-    instanceId: null,
+    instanceId: launch?.instanceId ?? null,
     capabilities: mode === 'standalone' ? ['local.invite'] : [],
     authorizedScopes: [],
     availableScopes: [],
     status: mode === 'standalone' ? 'ready' : 'unavailable',
     connectionState: mode === 'standalone' ? 'connected' : 'idle',
     epoch: 0,
-    invitedRoomId: null,
+    invitedRoomId: launch?.invitedRoomId ?? null,
     participantsRevision: null,
     message: '',
   }

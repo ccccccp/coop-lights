@@ -112,7 +112,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
   function invalidate(message: string): void {
     loginVersion++
     loggedIn = false
-    patch({ message, authorizedScopes: [], participantsRevision: null })
+    patch({ message, authorizedScopes: [], participantsRevision: null, invitedRoomId: null })
     emit({ type: 'session_invalidated', message })
     void clearGameSession().catch(() => undefined)
   }
@@ -154,7 +154,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         capabilities: [...ready.capabilities],
         availableScopes: [...ready.availableScopes],
         authorizedScopes: scopes.filter((scope) => sdk.hasScope(scope)),
-        invitedRoomId: ready.context.roomId ?? null,
+        invitedRoomId: loggedIn && context.instanceId === ready.instanceId ? context.invitedRoomId : null,
         epoch: sdk.connection.epoch,
         connectionState: sdk.state,
         status: 'ready',
@@ -252,7 +252,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         const result = await sdk.session.get({ state, scopes: selected as Scope[] })
         checkBinding()
         if (result.status === 'cancelled') return { status: 'cancelled' }
-        const session = await api.completeKookLogin(result.code, result.state)
+        const session = await api.completeKookLogin(result.code, result.state, context.instanceId ?? undefined)
         try {
           checkBinding()
         } catch (error) {
@@ -261,7 +261,11 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         }
         setGameToken(session.gameToken ?? null, state)
         loggedIn = true
-        patch({ authorizedScopes: scopes.filter((scope) => sdk.hasScope(scope)), message: '' })
+        patch({
+          authorizedScopes: scopes.filter((scope) => sdk.hasScope(scope)),
+          invitedRoomId: session.platform.invitedRoomId,
+          message: '',
+        })
         await watchParticipants()
         checkBinding()
         success = true
@@ -276,6 +280,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
     async logout() {
       loginVersion++
       loggedIn = false
+      patch({ invitedRoomId: null })
       await clearGameSession()
     },
     async invite(roomId) {

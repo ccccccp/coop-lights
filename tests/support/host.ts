@@ -67,8 +67,8 @@ function register() {
         availableScopes: params.has('core') ? [] : scopes,
         context: {
           contextType: 'voice_channel',
-          launchSource: roomId ? 'invite' : 'appLauncher',
-          ...(roomId ? { roomId } : {}),
+          launchSource: roomId || params.has('spoof-room') ? 'invite' : 'appLauncher',
+          ...(params.has('spoof-room') ? { roomId: params.get('spoof-room')! } : roomId ? { roomId } : {}),
         },
       }),
     'session.get': async (input) => {
@@ -79,7 +79,7 @@ function register() {
       const response = await fetch('/mock/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ player }),
+        body: JSON.stringify({ player, roomId }),
       })
       if (!response.ok) throw new Error('Mock code service failed')
       const { code } = await response.json()
@@ -130,7 +130,13 @@ function register() {
       }),
     'ui.openInviteModal': (input) => {
       document.querySelector('#host-status')!.textContent = `模拟邀请已提交，游戏房间 ${String(input.roomId)}`
-      return success({ status: 'submitted', sentCount: 1, failedCount: 0 })
+      return success(
+        params.has('cancel-invite')
+          ? { status: 'cancelled', sentCount: 0, failedCount: 0 }
+          : params.has('failed-invite')
+            ? { status: 'submitted', sentCount: 0, failedCount: 1 }
+            : { status: 'submitted', sentCount: 1, failedCount: 0 }
+      )
     },
     'officialServer.getStatus': () =>
       success({ configured: true, name: '模拟官方服务器', iconUrl: null, membership: 'not_joined' }),

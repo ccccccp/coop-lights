@@ -7,11 +7,13 @@ export async function createMockOAuth() {
     bob: { user_open_code: 'fixture-bob', username: '模拟玩家小林', avatar: 'https://avatars.test/bob.svg' },
   }
   type Account = (typeof accounts)[keyof typeof accounts]
-  const codes = new Map<string, { profile: Account; expiresAt: number }>()
-  const tokens = new Map<string, Account>()
+  type Launch = { instanceId: string; roomId: string | null }
+  const codes = new Map<string, { profile: Account; expiresAt: number } & Launch>()
+  const tokens = new Map<string, { profile: Account } & Launch>()
   const secret = randomBytes(32).toString('hex')
   let exchanges = 0
   let delay = 0
+  let contextDelay = 0
   const server = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json')
     res.setHeader('Cache-Control', 'no-store')
@@ -37,14 +39,38 @@ export async function createMockOAuth() {
         exchanges++
         if (delay) await new Promise((done) => setTimeout(done, delay))
         const token = randomBytes(32).toString('hex')
-        tokens.set(token, value.profile)
+        tokens.set(token, value)
         res.end(JSON.stringify({ access_token: token, token_type: 'Bearer', expires_in: 3600 }))
       } else if (req.url === '/userinfo' && req.method === 'GET') {
         const token = req.headers.authorization?.replace(/^Bearer /, '') ?? ''
-        const profile = tokens.get(token)
-        tokens.delete(token)
+        const profile = tokens.get(token)?.profile
         if (!profile) throw new Error('invalid token')
         res.end(JSON.stringify({ code: 0, data: profile }))
+      } else if (req.url?.startsWith('/api/v3/mini-game/context?') && req.method === 'GET') {
+        const token = req.headers.authorization?.replace(/^Bearer /, '') ?? ''
+        const launch = tokens.get(token)
+        const url = new URL(req.url, 'http://mock.test')
+        if (
+          !launch ||
+          url.searchParams.get('game_code') !== 'lights-sdk-fixture' ||
+          url.searchParams.get('instance_id') !== launch.instanceId
+        )
+          throw new Error('invalid context')
+        tokens.delete(token)
+        if (contextDelay) await new Promise((done) => setTimeout(done, contextDelay))
+        res.end(
+          JSON.stringify({
+            code: 0,
+            data: {
+              game_code: 'lights-sdk-fixture',
+              instance_id: launch.instanceId,
+              context_type: 4,
+              context_id: 'fixture-chat',
+              room_id: launch.roomId,
+              invite_status: launch.roomId ? 'joined_by_invite' : 'none',
+            },
+          })
+        )
       } else {
         res.writeHead(404).end('{}')
       }
@@ -64,19 +90,24 @@ export async function createMockOAuth() {
       redirectUri: 'https://127.0.0.1:5190/',
       tokenUrl: `http://127.0.0.1:${port}/oauth/token`,
       userInfoUrl: `http://127.0.0.1:${port}/userinfo`,
+      gameCode: 'lights-sdk-fixture',
+      contextUrl: `http://127.0.0.1:${port}/api/v3/mini-game/context`,
       userIdField: 'user_open_code' as const,
       userNameField: 'username' as const,
     },
-    issue(player: string) {
+    issue(player: string, roomId: string | null = null, instanceId = 'fixture-instance') {
       if (player !== 'alice' && player !== 'bob') throw new Error('Unknown fixture player')
       for (const [key, value] of codes) if (value.expiresAt <= Date.now()) codes.delete(key)
       const code = randomBytes(24).toString('hex')
-      codes.set(code, { profile: accounts[player], expiresAt: Date.now() + 60000 })
+      codes.set(code, { profile: accounts[player], expiresAt: Date.now() + 60000, instanceId, roomId })
       return code
     },
     exchanges: () => exchanges,
     setDelay(value: number) {
       delay = value
+    },
+    setContextDelay(value: number) {
+      contextDelay = value
     },
     setProfile(player: 'alice' | 'bob', patch: { username?: string; avatar?: string }) {
       Object.assign(accounts[player], patch)

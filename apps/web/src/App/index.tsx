@@ -5,7 +5,7 @@ import type { GameUser, PlatformAdapter, PlatformContext, RoomSnapshot } from '@
 import { PlatformControls } from './components/PlatformControls'
 import { UserAvatar } from './components/UserAvatar'
 
-import { api } from '../api'
+import { ApiError, api } from '../api'
 import { createPlatformAdapter } from '../platform'
 import { useConnection } from '../useConnection'
 
@@ -38,6 +38,8 @@ export function App() {
   const adapter = useRef<PlatformAdapter | null>(null),
     actionLock = useRef(false)
   const sessionGeneration = useRef(0)
+  const inviteAttempt = useRef<string | null>(null)
+  const invitationPending = useRef(false)
   const autoLoginAttempt = useRef<PlatformAdapter | null>(null)
   const updateRoom = useCallback(
     (next: RoomSnapshot | null) =>
@@ -63,6 +65,8 @@ export function App() {
     let alive = true
     let unsubscribe: (() => void) | undefined
     let current: PlatformAdapter | null = null
+    inviteAttempt.current = null
+    invitationPending.current = false
     setBooted(false)
     void (async () => {
       try {
@@ -165,6 +169,46 @@ export function App() {
   }
   const kook = health?.platform.mode === 'kook'
   const loginAvailable = !!health?.oauthConfigured && !!platform?.availableScopes.includes('profile.basic')
+  useEffect(() => {
+    const target = platform?.invitedRoomId
+    const current = adapter.current
+    if (!kook || !booted || !user || !target || !connected || busy || !current) return
+    const key = user.id + ':' + target
+    if (invitationPending.current || inviteAttempt.current === key) return
+    inviteAttempt.current = key
+    if (room?.id === target) return
+    invitationPending.current = true
+    const generation = sessionGeneration.current
+    void action(async () => {
+      const valid = () => adapter.current === current && sessionGeneration.current === generation
+      let leftPreviousRoom = !room
+      try {
+        if (room) {
+          await api.leave(room.id)
+          if (!valid()) return
+          leftPreviousRoom = true
+          setRoom(null)
+        }
+        const result = await api.join(target)
+        if (!valid()) return
+        updateRoom(result.room)
+        setNotice('已加入朋友邀请的点灯房间')
+      } catch (error) {
+        if (!valid()) return
+        if (leftPreviousRoom) setRoom(null)
+        setRoomCode('')
+        setNotice(
+          error instanceof ApiError && error.code === 'ROOM_FULL'
+            ? '朋友的房间已满，已返回主页，你可以创建新房间或加入其他房间。'
+            : error instanceof ApiError && error.code === 'ROOM_NOT_FOUND'
+              ? '朋友的房间已结束，已返回主页。'
+              : messageOf(error)
+        )
+      } finally {
+        invitationPending.current = false
+      }
+    })
+  }, [kook, booted, user?.id, platform?.invitedRoomId, connected, busy, room?.id])
   useEffect(() => {
     const current = adapter.current
     if (
@@ -405,7 +449,13 @@ export function App() {
                     void action(async () => {
                       const result = await adapter.current!.invite(room.id)
                       if (result.status === 'submitted')
-                        setNotice(result.url ? '邀请链接已复制，发给朋友即可加入' : '邀请已提交')
+                        setNotice(
+                          result.url
+                            ? '邀请链接已复制，发给朋友即可加入'
+                            : result.failedCount
+                              ? `已发送给 ${result.sentCount ?? 0} 位好友，${result.failedCount} 次发送失败`
+                              : `已发送给 ${result.sentCount ?? 0} 位好友，接受后将进入当前房间`
+                        )
                     })
                   }
                 >

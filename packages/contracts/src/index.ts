@@ -105,7 +105,9 @@ export interface PlatformAdapter {
     scopes?: string[]
   ): Promise<{ status: 'logged_in'; session: SessionResponse } | { status: 'cancelled' }>
   logout(): Promise<void>
-  invite(roomId: string): Promise<{ status: 'submitted' | 'cancelled'; url?: string }>
+  invite(
+    roomId: string
+  ): Promise<{ status: 'submitted' | 'cancelled'; sentCount?: number; failedCount?: number; url?: string }>
   subscribe(listener: (event: PlatformEvent) => void): () => void
   reportLoaded(): Promise<void>
   inspect?(resource: PlatformResource, cursor?: string): Promise<PlatformInspection>

@@ -29,6 +29,11 @@ const envSchema = z.object({
   KOOK_REDIRECT_URI: z.string().default(''),
   KOOK_TOKEN_URL: z.string().default(''),
   KOOK_USERINFO_URL: z.string().default(''),
+  KOOK_GAME_CODE: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,32}$/)
+    .default('751wtNQveFXjlVoZ'),
+  KOOK_CONTEXT_URL: z.string().default(''),
   KOOK_USER_ID_FIELD: z.enum(['user_open_code', 'user_code', 'id']).optional(),
   KOOK_USER_NAME_FIELD: z.enum(['username', 'nickname']).default('username'),
 })
@@ -55,6 +60,10 @@ export function getConfig() {
       redirectUri: e.KOOK_REDIRECT_URI,
       tokenUrl: e.KOOK_TOKEN_URL,
       userInfoUrl: e.KOOK_USERINFO_URL,
+      gameCode: e.KOOK_GAME_CODE,
+      contextUrl:
+        e.KOOK_CONTEXT_URL ||
+        (e.KOOK_USERINFO_URL ? new URL('/api/v3/mini-game/context', e.KOOK_USERINFO_URL).href : ''),
       userIdField: e.KOOK_USER_ID_FIELD,
       userNameField: e.KOOK_USER_NAME_FIELD,
     },

@@ -46,7 +46,15 @@ async function fixture(allowedOrigins = ['https://game.test']) {
       method: body === undefined ? 'GET' : 'POST',
       url: path,
       headers: { origin, cookie, 'content-type': 'application/json', ...(authorization ? { authorization } : {}) },
-      ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
+      ...(body === undefined
+        ? {}
+        : {
+            payload: JSON.stringify(
+              path === '/api/kook/login/complete'
+                ? { instanceId: 'fixture-instance', ...(body as Record<string, unknown>) }
+                : body
+            ),
+          }),
     })
     const cookies = response.headers['set-cookie'] ?? []
     const list = Array.isArray(cookies) ? cookies : [cookies]
@@ -91,7 +99,7 @@ test('OAuth creates a browser-bound one-use transaction and a server-verified ga
   expect((await f.http('/api/session', result.cookie)).status).toBe(200)
   expect((await f.http('/api/kook/login/complete', transaction.cookie, payload)).status).toBe(401)
   expect(f.oauth.exchanges()).toBe(1)
-  expect((await f.http('/api/rooms', result.cookie, {})).data.room.platformInstanceId).toBeNull()
+  expect((await f.http('/api/rooms', result.cookie, {})).data.room.platformInstanceId).toBe('fixture-instance')
 })
 
 test('OAuth rejects foreign origin, spoofed identity and instance data without exchanging code', async () => {
@@ -339,4 +347,66 @@ test('旧数据库幂等增加头像列，更新头像不改变用户标识和�
     completedRounds: 7,
     totalMoves: 42,
   })
+})
+
+test('KOOK后端context确认的room_id和instance_id进入游戏登录结果及会话', async () => {
+  const f = await fixture()
+  const tx = await f.start()
+  const result = await f.http('/api/kook/login/complete', tx.cookie, {
+    state: tx.data.state,
+    code: f.oauth.issue('alice', 'ABC234'),
+  })
+  expect(result.status).toBe(200)
+  expect(result.data.platform).toMatchObject({ instanceId: 'fixture-instance', invitedRoomId: 'ABC234' })
+  const room = await f.http('/api/rooms', result.cookie, {})
+  expect(room.data.room.platformInstanceId).toBe('fixture-instance')
+  expect((await f.http('/api/session', result.cookie)).data.platform.instanceId).toBe('fixture-instance')
+})
+
+test('浏览器不能自报room_id或伪造实例；context拒绝后不签发游戏会话', async () => {
+  const f = await fixture()
+  const tx = await f.start()
+  const code = f.oauth.issue('alice', 'ABC234')
+  const payload = { state: tx.data.state, code }
+  expect((await f.http('/api/kook/login/complete', tx.cookie, { ...payload, room_id: 'OTHER2' })).status).toBe(400)
+  expect(f.oauth.exchanges()).toBe(0)
+  const rejected = await f.http('/api/kook/login/complete', tx.cookie, { ...payload, instanceId: 'foreign-instance' })
+  expect(rejected.status).toBe(502)
+  expect(rejected.cookie).toBe('')
+  expect(rejected.data.details.stage).toBe('context')
+})
+
+test('游戏后端拒绝跨平台实例的房间加入', async () => {
+  const f = await fixture()
+  async function login(player: string, instanceId: string) {
+    const tx = await f.start()
+    return f.http('/api/kook/login/complete', tx.cookie, {
+      state: tx.data.state,
+      code: f.oauth.issue(player, null, instanceId),
+      instanceId,
+    })
+  }
+  const a = await login('alice', 'instance-a'),
+    b = await login('bob', 'instance-b')
+  expect(a.status).toBe(200)
+  expect(b.status).toBe(200)
+  const room = await f.http('/api/rooms', a.cookie, {})
+  const denied = await f.http('/api/rooms/' + room.data.room.id + '/join', b.cookie, {})
+  expect(denied.status).toBe(403)
+  expect(denied.data.code).toBe('INSTANCE_MISMATCH')
+})
+
+test('取消context查询中的授权事务，迟到的room_id不能创建新会话', async () => {
+  const f = await fixture()
+  f.oauth.setContextDelay(150)
+  const tx = await f.start()
+  const request = f.http('/api/kook/login/complete', tx.cookie, {
+    state: tx.data.state,
+    code: f.oauth.issue('alice', 'ABC234'),
+  })
+  await expect.poll(f.oauth.exchanges).toBe(1)
+  await f.http('/api/kook/login/cancel', tx.cookie, { state: tx.data.state })
+  const result = await request
+  expect(result.status).toBe(401)
+  expect(result.cookie).toBe('')
 })

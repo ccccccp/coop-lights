@@ -56,8 +56,13 @@ export const api = {
     loginNonces.set(transaction.state, clientNonce)
     return transaction
   },
-  completeKookLogin: (code: string, state: string) =>
-    request<SessionResponse>('/api/kook/login/complete', { code, state, clientNonce: loginNonces.get(state) }),
+  completeKookLogin: (code: string, state: string, instanceId?: string) =>
+    request<SessionResponse>('/api/kook/login/complete', {
+      code,
+      state,
+      instanceId,
+      clientNonce: loginNonces.get(state),
+    }),
   async cancelKookLogin(state: string) {
     try {
       return await request('/api/kook/login/cancel', { state, clientNonce: loginNonces.get(state) })
