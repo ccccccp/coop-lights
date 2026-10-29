@@ -65,11 +65,16 @@ export async function createMockOAuth() {
             code: 0,
             data: contextResponse ?? {
               game_code: 'lights-sdk-fixture',
-              instance_id: launch.instanceId,
-              context_type: 4,
-              context_id: 'fixture-chat',
-              room_id: launch.roomId,
-              invite_status: launch.roomId ? 'joined_by_invite' : 'none',
+              instance: {
+                instance_id: launch.instanceId,
+                state: 'active',
+                context_type: 4,
+                context_id: 'fixture-chat',
+              },
+              room: launch.roomId
+                ? { room_id: launch.roomId, room_source: 'invite' }
+                : { room_id: launch.instanceId, room_source: 'instance' },
+              invite: { status: launch.roomId ? 'joined_by_invite' : 'none' },
             },
           })
         )

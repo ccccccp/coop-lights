@@ -297,6 +297,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
       const result = await api.resolveInvite(context.instanceId)
       if (disposed || version !== loginVersion || sdk.state !== 'connected' || sdk.connection.epoch !== epoch)
         throw new Error('邀请期间游戏连接已变化')
+      if (!result.invitedRoomId) throw new Error('KOOK邀请未返回点灯房间号，暂时无法自动加入，请向邀请人获取房间号')
       patch({ invitedRoomId: result.invitedRoomId })
     },
     async logout() {

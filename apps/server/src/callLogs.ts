@@ -58,6 +58,8 @@ const normalize = (key: string) => key.replace(/[_-]/g, '').toLowerCase()
 export function sanitizeCallData(value: unknown, extraSecrets: string[] = []): unknown {
   const secrets = new Set(extraSecrets.filter(Boolean))
   function isSecret(key: string, path: string) {
+    // KOOK实例的state是业务状态；OAuth事务state仍必须脱敏。
+    if (normalize(key) === 'state' && ['response.data.instance', 'response.instance'].includes(path)) return false
     return (
       (sensitive.has(normalize(key)) && normalize(key) !== 'code') ||
       (normalize(key) === 'code' && !path.startsWith('response'))

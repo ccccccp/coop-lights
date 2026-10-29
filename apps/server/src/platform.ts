@@ -277,19 +277,27 @@ export async function readKookContext(
     secrets,
     record
   )
-  // 消费平台当前扁平DTO；不从SDK、URL或浏览器提交的房间号补齐可信字段。
+  // 按YApi12090和真实返回读取嵌套实例；实例／频道编号不能代替游戏房间号。
   const parsed = z
     .object({
       game_code: z.literal(config.gameCode),
-      instance_id: z.literal(instanceId),
-      context_type: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
-      context_id: z.string().min(1).max(256),
-      room_id: roomIdSchema.or(z.literal('')).nullish(),
+      instance: z.object({
+        instance_id: z.literal(instanceId),
+        state: z.literal('active'),
+        context_type: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+        context_id: z.string().min(1).max(256),
+      }),
+      invite: z.object({ status: z.enum(['none', 'joined_by_invite']) }),
+      // YApi12090：普通进入的room_id是平台实例回退值，不是点灯房间号。
+      room: z.discriminatedUnion('room_source', [
+        z.object({ room_source: z.literal('invite'), room_id: roomIdSchema }),
+        z.object({ room_source: z.literal('instance'), room_id: z.literal(instanceId) }),
+      ]),
     })
     .safeParse(context.data)
   if (!parsed.success) {
     // 只报告固定字段路径和类型，不回显上游内容、用户资料或OAuth凭据。
-    const fields = ['game_code', 'instance_id', 'context_type', 'context_id', 'room_id', 'instance', 'invite']
+    const fields = ['game_code', 'instance', 'invite', 'room']
     const receivedTypes = Object.fromEntries(
       fields.map((field) => {
         const value = context.data[field]
@@ -302,7 +310,13 @@ export async function readKookContext(
       received_types: receivedTypes,
     })
   }
-  return { instanceId: parsed.data.instance_id, invitedRoomId: parsed.data.room_id || null }
+  return {
+    instanceId: parsed.data.instance.instance_id,
+    invitedRoomId:
+      parsed.data.invite.status === 'joined_by_invite' && parsed.data.room.room_source === 'invite'
+        ? parsed.data.room.room_id
+        : null,
+  }
 }
 
 interface LoginTransaction {

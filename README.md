@@ -102,7 +102,7 @@ pnpm test:sdk
 
 普通打开只进行 OAuth 换码和用户资料读取，不请求 context，也不要求 mini_game.context 权限作为基本登录前置。登录结果成功后立即保留用户身份和主页。
 
-受邀启动（SDK launchSource=invite）登录成功后，另行调用游戏后端 POST /api/kook/invite/resolve。后端使用仅驻留内存的 OAuth token 查询 KOOK /api/v3/mini-game/context，核对游戏／实例并读取 data.room_id；成功才自动加入房间。查询失败提示原因并保留登录与主页；房间满员或已结束时同样回主页。主动离房不会重复自动入房。
+受邀启动（SDK launchSource=invite）登录成功后，另行调用游戏后端 POST /api/kook/invite/resolve。后端使用仅驻留内存的 OAuth token 查询 KOOK /api/v3/mini-game/context，按 data.instance 核对游戏／实例和 data.invite.status，并读取 data.room。只有 invite.status=joined_by_invite 且 room.room_source=invite 时，才按 room.room_id 自动加入点灯房间；room_source=instance 时 room_id 是平台实例回退值，不用于游戏入房。实例／频道／私信编号和旧平铺房间字段均不替代正式游戏房间号。查询失败提示原因并保留登录与主页；房间满员或已结束时同样回主页。主动离房不会重复自动入房。
 
 KOOK 后端须部署 POST /api/v3/mini-game/invite-send 和 context 接口，邀请核验需要 mini_game.context 授权；上下文格式错误只影响接受邀请。普通房间继续使用游戏身份和六位房间号，平台实例 ID 不再是基本登录或游玩的必经校验；服务器内存中保存核验成功的邀请目标，不以浏览器 roomId 自报作为邀请依据。重启后接受邀请可能需要重新授权，已有基本登录不受影响。
 

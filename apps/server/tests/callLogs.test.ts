@@ -59,3 +59,22 @@ test('日志持久化失败不阻断业务，写入在排队前已脱敏', async
   expect(warnings).toBe(1)
   expect(JSON.stringify(saved)).not.toMatch(/private-code|private-token/)
 })
+
+test('KOOK实例业务state和participant_state保留，OAuth事务state及其回显仍脱敏', () => {
+  const cleaned = sanitizeCallData({
+    request: { body: { state: 'opaque-oauth-state' } },
+    response: {
+      data: { instance: { state: 'active' }, user: { participant_state: 'active' } },
+      state: 'oauth-code-response-state',
+      message: 'opaque-oauth-state',
+    },
+  })
+  expect(cleaned).toMatchObject({
+    request: { body: { state: '[REDACTED]' } },
+    response: {
+      data: { instance: { state: 'active' }, user: { participant_state: 'active' } },
+      state: '[REDACTED]',
+      message: '[REDACTED]',
+    },
+  })
+})

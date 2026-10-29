@@ -113,3 +113,11 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 ## 日志查询
 
 /log 页面及游戏内“调用日志”入口读取 /api/logs。需服务端 LOG_ACCESS_KEY，以 x-log-key 请求头访问，支持登录失败前查询。默认最近3天倒序，记录 KOOK／游戏请求参数、脱敏响应、HTTP状态、业务码、耗时、错误及关联编号；PostgreSQL持久化，默认保留7天（LOG_RETENTION_DAYS）。部署执行 pnpm db:migrate。
+
+## 2026-10-29 context room对象对接
+
+依据 YApi12090，更新时间2026-10-29T07:56:30Z：实例为 data.instance，邀请状态为 data.invite.status，房间为 data.room。room.room_source=invite 时 room.room_id 是发送邀请时游戏提交的房间号；room_source=instance 时回退为 instance_id，仅作平台实例信息。
+
+点灯后端要求游戏编号／嵌套实例匹配且实例active，只有 joined_by_invite 与 invite来源同时成立才将六位游戏房间号交给前端自动加入。普通instance来源不会触发入房，也不套用六位房间号校验；不读取旧 data.room_id、invite.room_id 或浏览器房间号作兜底。结构、来源或房间号非法时保留基本登录并显示明确错误。
+
+普通打开仍只完成基本资料登录，不调用context。无需更改SDK公开API、登录协议或数据库结构。日志只对OAuth事务state脱敏，保留instance.state及participant_state业务状态。

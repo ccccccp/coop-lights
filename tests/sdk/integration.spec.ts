@@ -356,7 +356,7 @@ test('接受邀请加入后主动离开，不因同一启动的roomId再次自�
   }
 })
 
-test('自动入房采用游戏后端context的room_id，忽略宿主启动数据中伪造的房间', async ({ browser }) => {
+test('自动入房采用context的room.room_id，忽略宿主启动数据中伪造的房间', async ({ browser }) => {
   const contexts = await Promise.all([
     browser.newContext({ ignoreHTTPSErrors: true }),
     browser.newContext({ ignoreHTTPSErrors: true }),
@@ -438,4 +438,23 @@ test('邀请context失败保留基本登录并提示回主页，可在日志页�
   await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家小林')
   await expect(game(page).getByRole('status')).toContainText('已登录，暂时无法加入邀请房间')
   await expect(game(page).getByTestId('create-room')).toBeEnabled()
+})
+
+test('KOOK已确认受邀但未返回room_id时保留登录、提示缺房间，禁止猜测实例或会话编号入房', async ({ page }) => {
+  await page.route('**/api/kook/invite/resolve', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ instanceId: 'fixture-instance', invitedRoomId: null }),
+    })
+  )
+  let joins = 0
+  page.on('request', (request) => {
+    if (/\/rooms\/[^/]+\/join/.test(request.url())) joins++
+  })
+  await page.goto('https://localhost:5190/?player=bob&room=ABC234')
+  await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家小林')
+  await expect(game(page).getByRole('status')).toContainText('KOOK邀请未返回点灯房间号')
+  await expect(game(page).getByTestId('create-room')).toBeEnabled()
+  expect(joins).toBe(0)
 })
