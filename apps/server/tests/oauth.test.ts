@@ -103,6 +103,73 @@ test('OAuth creates a browser-bound one-use transaction and a server-verified ga
   expect((await f.http('/api/rooms', result.cookie, {})).data.room.platformInstanceId).toBe('fixture-instance')
 })
 
+test('排行榜读取持久化成绩并正确排序、并列，隔离独立模式及其他应用，使用最新KOOK头像昵称', async () => {
+  const f = await fixture()
+  expect((await f.http('/api/leaderboard')).status).toBe(401)
+  const { result } = await f.login()
+  const a = await f.repo.getUser(result.data.user.id)
+  const b = await f.repo.upsertUser({
+    appId: a!.appId,
+    openCode: 'bob',
+    nickname: '小林',
+    avatarUrl: 'https://avatars.test/bob.svg',
+  })
+  const c = await f.repo.upsertUser({ appId: a!.appId, openCode: 'carol', nickname: '小月', avatarUrl: null })
+  const local = await f.repo.upsertUser({ appId: 'standalone', openCode: 'local', nickname: '独立玩家' })
+  const foreign = await f.repo.upsertUser({ appId: 'other-app', openCode: 'foreign', nickname: '其他应用玩家' })
+  await f.repo.upsertUser({ appId: a!.appId, openCode: 'new', nickname: '尚未通关玩家' })
+  expect((await f.http('/api/leaderboard', result.cookie)).data.items).toEqual([])
+  const first = {
+    roundId: randomUUID(),
+    roomId: 'ABC234',
+    finishedAt: Date.now(),
+    moves: 5,
+    contributions: { [a!.id]: 1, [b.id]: 1, [c.id]: 1, [local.id]: 1, [foreign.id]: 1 },
+  }
+  await f.repo.settle(first)
+  await f.repo.settle(first)
+  await f.repo.settle({ ...first, roundId: randomUUID() })
+  await f.repo.settle({ ...first, roundId: randomUUID(), contributions: { [b.id]: 1 } })
+  const response = await f.http('/api/leaderboard', result.cookie)
+  expect(response.status).toBe(200)
+  expect(response.cacheControl).toBe('no-store')
+  expect(
+    response.data.items.map((entry: { nickname: string; rank: number; completedRounds: number }) => [
+      entry.nickname,
+      entry.rank,
+      entry.completedRounds,
+    ])
+  ).toEqual([['小林', 1, 3], ...[a!, c].sort((x, y) => x.id.localeCompare(y.id)).map((u) => [u.nickname, 2, 2])])
+  expect(JSON.stringify(response.data)).not.toMatch(/openCode|open_code|appId|app_id|access_token|totalMoves/)
+  expect(response.data.items[0].avatarUrl).toBe('https://avatars.test/bob.svg')
+  expect(response.data.updatedAt).toBeGreaterThan(0)
+  await f.repo.upsertUser({
+    appId: a!.appId,
+    openCode: 'bob',
+    nickname: '更新后的小林',
+    avatarUrl: 'https://avatars.test/new.svg',
+  })
+  expect((await f.http('/api/leaderboard', result.cookie)).data.items[0]).toMatchObject({
+    nickname: '更新后的小林',
+    avatarUrl: 'https://avatars.test/new.svg',
+    completedRounds: 3,
+  })
+})
+
+test('排行榜最多返回100位已通关玩家', async () => {
+  const f = await fixture()
+  const { result } = await f.login()
+  await f.admin.query(
+    `INSERT INTO lights_users (id, app_id, open_code, nickname, completed_rounds)
+    SELECT gen_random_uuid(), $1, 'rank-' || n, '玩家' || n, n FROM generate_series(1, 102) AS n`,
+    ['lights-sdk-fixture']
+  )
+  const response = await f.http('/api/leaderboard', result.cookie)
+  expect(response.data.items).toHaveLength(100)
+  expect(response.data.items[0]).toMatchObject({ rank: 1, completedRounds: 102 })
+  expect(response.data.items[99]).toMatchObject({ rank: 100, completedRounds: 3 })
+})
+
 test('OAuth rejects foreign origin, spoofed identity and instance data without exchanging code', async () => {
   const f = await fixture()
   expect((await f.http('/api/kook/login/start', '', {}, 'https://evil.test')).status).toBe(403)

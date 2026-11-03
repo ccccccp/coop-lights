@@ -9,6 +9,8 @@ test('roomId链接直接加入，主动离房后留在大厅且不重复加入',
     const a = await aContext.newPage(),
       b = await bContext.newPage()
     await a.goto('/')
+    await expect(a.getByRole('button', { name: '排行榜', exact: true })).toHaveCount(0)
+    expect((await a.request.get('/api/leaderboard')).status()).toBe(404)
     await a.getByTestId('nickname').fill('房主')
     await a.getByTestId('standalone-login').click()
     await a.getByTestId('create-room').click()

@@ -118,6 +118,12 @@ WebSocket 登录后立即下发 `lobby.snapshot`，建房、入房、离房、�
 
 KOOK 后端须部署 POST /api/v3/mini-game/invite-send 和 context 接口，大厅与邀请核验需要 mini_game.context 授权。服务器内存中保存核验成功的上下文和邀请目标，不以浏览器 roomId 自报作为跨上下文邀请依据。重启后可能需要重新授权，已有基本登录不受影响。
 
+## KOOK 通关排行榜
+
+KOOK 模式登录后，顶部「排行榜」打开通关次数弹框，展示当前应用累计通关次数最高的前 100 位已通关玩家，包括 KOOK 头像、昵称和通关次数，同分并列。榜单读取 PostgreSQL 已保存的结算成绩，独立模式和其他应用的账号不参与排行。每次打开或点击「刷新排行榜」读取最新数据；弹框打开期间自己完成通关后也会刷新。头像不可用时显示昵称首字。
+
+`GET /api/leaderboard` 需要游戏登录，只在 KOOK 模式开放。返回榜单和更新时间，不依赖频道上下文，也不返回 KOOK 用户编号或 OAuth 凭证。
+
 ## 接口调用日志
 
 访问 /log（例如 https://cp-coop-lights.vanillacake.cn/log），或点击游戏右上角“调用日志”。部署前执行 pnpm db:migrate，在服务端环境变量配置 LOG_ACCESS_KEY，重启游戏服务后用同一访问密钥查询。密钥仅在日志页面内存驻留，不写入 URL、浏览器存储或日志。

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { GameUser, LobbySnapshot, PlatformAdapter, PlatformContext, RoomSnapshot } from '@lights/contracts'
 
+import { Leaderboard } from './components/Leaderboard'
 import { PlatformControls } from './components/PlatformControls'
 import { RoomLobby } from './components/RoomLobby'
 import { UserAvatar } from './components/UserAvatar'
@@ -25,6 +26,7 @@ function prettyTime(ms: number) {
 }
 export function App() {
   const [showLogs, setShowLogs] = useState(false)
+  const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [booted, setBooted] = useState(false),
     [user, setUser] = useState<GameUser | null>(null)
   const [room, setRoom] = useState<RoomSnapshot | null>(null),
@@ -82,6 +84,9 @@ export function App() {
     refreshUser,
     updateLobby
   )
+  useEffect(() => {
+    setShowLeaderboard(false)
+  }, [user?.id])
   useEffect(() => {
     let alive = true
     let unsubscribe: (() => void) | undefined
@@ -288,6 +293,9 @@ export function App() {
   }, [booted, kook, loginAvailable, platform?.status, user, busy])
   return (
     <div className="app-shell">
+      {kook && user && showLeaderboard && (
+        <Leaderboard key={user.id} user={user} onClose={() => setShowLeaderboard(false)} />
+      )}
       {showLogs && (
         <div className="call-log-overlay" role="dialog" aria-modal="true" aria-label="接口调用日志">
           <LogPage onClose={() => setShowLogs(false)} />
@@ -306,6 +314,11 @@ export function App() {
           </span>
         </a>
         <div className="topbar-right">
+          {kook && user && (
+            <button className="text-button" onClick={() => setShowLeaderboard(true)}>
+              排行榜
+            </button>
+          )}
           <button className="text-button" onClick={() => setShowLogs(true)}>
             调用日志
           </button>

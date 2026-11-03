@@ -437,6 +437,11 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       platform: platformContext(config.mode, { instanceId: session.instanceId }),
     }
   })
+  app.get('/api/leaderboard', async (req) => {
+    check(config.mode === 'kook', 'LEADERBOARD_UNAVAILABLE', '排行榜仅在 KOOK 模式开放', 404)
+    const { user } = await auth(req)
+    return { items: await repo.getLeaderboard(user.appId), updatedAt: Date.now() }
+  })
   app.post('/api/logout', async (req, reply) => {
     const token = requestToken(req)
     if (token) await revokeSession(hash(token))

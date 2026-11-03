@@ -86,6 +86,17 @@ export interface GameUser {
   completedRounds: number
   totalMoves: number
 }
+export interface LeaderboardEntry {
+  id: string
+  rank: number
+  nickname: string
+  avatarUrl: string | null
+  completedRounds: number
+}
+export interface LeaderboardResponse {
+  items: LeaderboardEntry[]
+  updatedAt: number
+}
 export interface PlatformContext {
   mode: 'standalone' | 'kook'
   context?: RoomContext | null

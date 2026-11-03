@@ -845,10 +845,22 @@ main {
     padding: 0 16px;
   }
   .topbar {
-    height: 72px;
+    min-height: 72px;
+    height: auto;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px 0;
   }
   .topbar-right {
     gap: 8px;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: auto;
+  }
+  .topbar-right .text-button {
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .brand {
     font-size: 12px;

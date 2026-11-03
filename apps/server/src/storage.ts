@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import pg from 'pg'
 
-import type { GameUser } from '@lights/contracts'
+import type { GameUser, LeaderboardEntry } from '@lights/contracts'
 
 import type { CallLog, CallLogInput, CallLogQuery, CallLogRepository } from './callLogs'
 
@@ -31,6 +31,7 @@ export interface Settlement {
 export interface Repository extends CallLogRepository {
   kind: 'postgres'
   getUser(id: string): Promise<StoredUser | null>
+  getLeaderboard(appId: string): Promise<LeaderboardEntry[]>
   upsertUser(identity: Identity): Promise<StoredUser>
   saveSession(session: Session): Promise<void>
   getSession(hash: string): Promise<Session | null>
@@ -67,6 +68,23 @@ export class PostgresRepository implements Repository {
   async getUser(id: string) {
     const r = await this.pool.query('SELECT * FROM lights_users WHERE id=$1', [id])
     return r.rows[0] ? this.user(r.rows[0]) : null
+  }
+  async getLeaderboard(appId: string): Promise<LeaderboardEntry[]> {
+    // 通关次数相同则并列名次，以游戏用户 ID 保持列表顺序稳定。
+    const result = await this.pool.query(
+      `SELECT id, nickname, avatar_url, completed_rounds,
+        RANK() OVER (ORDER BY completed_rounds DESC) AS rank
+       FROM lights_users WHERE app_id=$1 AND completed_rounds>0
+       ORDER BY completed_rounds DESC, id ASC LIMIT 100`,
+      [appId]
+    )
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      rank: Number(row.rank),
+      nickname: String(row.nickname),
+      avatarUrl: typeof row.avatar_url === 'string' ? row.avatar_url : null,
+      completedRounds: Number(row.completed_rounds),
+    }))
   }
   async upsertUser(i: Identity) {
     const r = await this.pool.query(

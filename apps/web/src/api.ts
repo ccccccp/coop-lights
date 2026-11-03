@@ -1,4 +1,4 @@
-import type { LobbySnapshot, RoomContext, RoomSnapshot, SessionResponse } from '@lights/contracts'
+import type { LeaderboardResponse, LobbySnapshot, RoomContext, RoomSnapshot, SessionResponse } from '@lights/contracts'
 
 export class ApiError extends Error {
   constructor(
@@ -93,6 +93,7 @@ export const api = {
       instanceId,
     }),
   lobby: () => request<LobbySnapshot>('/api/lobby'),
+  leaderboard: () => request<LeaderboardResponse>('/api/leaderboard'),
   create: () => request<{ room: RoomSnapshot }>('/api/rooms', {}),
   join: (id: string) => request<{ room: RoomSnapshot }>(`/api/rooms/${id}/join`, {}),
   leave: (id: string) => request(`/api/rooms/${id}/leave`, {}),

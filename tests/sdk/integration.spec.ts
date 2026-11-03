@@ -140,6 +140,21 @@ test('two SDK players exchange code, invite, cooperate and recover the scoped co
     }
     await expect(game(a).getByTestId('finished')).toContainText('记录已保存')
     await expect(game(b).getByTestId('finished')).toContainText('协作成功')
+    await game(a).getByRole('button', { name: '排行榜', exact: true }).click()
+    const ranking = game(a).getByRole('dialog', { name: '通关次数排行榜' })
+    await expect(ranking.getByRole('list', { name: '通关排名' })).toBeVisible()
+    await expect(ranking.getByRole('img', { name: '模拟玩家阿青的 KOOK 头像' })).toBeVisible()
+    await expect(ranking.getByRole('img', { name: '模拟玩家小林的 KOOK 头像' })).toBeVisible()
+    await expect(ranking.locator('.is-me')).toContainText('模拟玩家阿青')
+    await expect(ranking.locator('.is-me .leaderboard-score')).toHaveText(/\d+ 次/)
+    await a.screenshot({ path: testInfo.outputPath('leaderboard-desktop.png'), fullPage: true })
+    await a.setViewportSize({ width: 430, height: 900 })
+    await expect(ranking).toBeVisible()
+    await a.screenshot({ path: testInfo.outputPath('leaderboard-narrow.png'), fullPage: true })
+    await ranking.getByRole('button', { name: '关闭排行榜' }).press('Escape')
+    await expect(ranking).not.toBeVisible()
+    await expect(game(a).getByRole('button', { name: '排行榜', exact: true })).toBeFocused()
+    await a.setViewportSize({ width: 1440, height: 1100 })
     await a.getByRole('button', { name: '断线恢复', exact: true }).press('Enter')
     await game(a).locator('.test-panel summary').click()
     await expect(game(a).getByTestId('sdk-state')).toContainText('epoch 2', { timeout: 20000 })
@@ -156,6 +171,50 @@ test('two SDK players exchange code, invite, cooperate and recover the scoped co
     await aContext.close()
     await bContext.close()
   }
+})
+
+test('排行榜加载失败可重试，空榜提示、头像回退和关闭后重新打开均正常', async ({ page }) => {
+  let calls = 0
+  await page.route('**/api/leaderboard', (route) => {
+    calls++
+    return route.fulfill({
+      status: calls === 1 ? 503 : 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        calls === 1
+          ? { code: 'UNAVAILABLE', message: '排行榜暂时不可用' }
+          : calls === 2
+            ? { items: [], updatedAt: Date.now() }
+            : {
+                items: [
+                  {
+                    id: 'someone',
+                    rank: 1,
+                    nickname: '小伙伴',
+                    avatarUrl: 'https://avatars.test/unavailable.svg',
+                    completedRounds: 12,
+                  },
+                ],
+                updatedAt: Date.now(),
+              }
+      ),
+    })
+  })
+  await open(page, 'alice', undefined, false)
+  const button = game(page).getByRole('button', { name: '排行榜', exact: true })
+  await button.click()
+  const dialog = game(page).getByRole('dialog', { name: '通关次数排行榜' })
+  await expect(dialog.getByRole('alert')).toContainText('排行榜暂时不可用')
+  await dialog.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(dialog).toContainText('还没有通关记录')
+  await dialog.getByRole('button', { name: '关闭排行榜' }).click()
+  await button.click()
+  await expect(dialog.getByRole('listitem')).toContainText('小伙伴')
+  await expect(dialog.getByRole('listitem')).toContainText('12 次')
+  await expect(dialog.getByRole('img')).toHaveCount(0)
+  await expect(dialog.getByLabel('小伙伴的头像', { exact: true })).toHaveText('小')
+  await dialog.getByRole('button', { name: '刷新排行榜' }).click()
+  await expect.poll(() => calls).toBe(4)
 })
 
 test('KOOK core lifecycle requests missed bootstrap, loads without OAuth and stops after host exit', async ({
