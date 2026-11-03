@@ -2,6 +2,32 @@ import { expect, test } from '@playwright/test'
 
 import { solve } from '../../apps/server/src/board'
 
+test('roomId链接直接加入，主动离房后留在大厅且不重复加入', async ({ browser }) => {
+  const aContext = await browser.newContext(),
+    bContext = await browser.newContext()
+  try {
+    const a = await aContext.newPage(),
+      b = await bContext.newPage()
+    await a.goto('/')
+    await a.getByTestId('nickname').fill('房主')
+    await a.getByTestId('standalone-login').click()
+    await a.getByTestId('create-room').click()
+    const id = await a.getByTestId('active-room-code').innerText()
+    await b.goto('/?roomId=' + id)
+    await b.getByTestId('nickname').fill('直达玩家')
+    await b.getByTestId('standalone-login').click()
+    await expect(b.getByTestId('active-room-code')).toHaveText(id)
+    await b.getByRole('button', { name: '离开房间', exact: true }).click()
+    await expect(b.getByTestId('room-lobby')).toBeVisible()
+    await b.getByRole('button', { name: '刷新大厅', exact: true }).click()
+    await expect(b.getByTestId('active-room-code')).toHaveCount(0)
+    await a.getByRole('button', { name: '离开房间', exact: true }).click()
+  } finally {
+    await aContext.close()
+    await bContext.close()
+  }
+})
+
 test('双浏览器协作、刷新恢复、结算和退出', async ({ browser }, testInfo) => {
   const aContext = await browser.newContext(),
     bContext = await browser.newContext()
@@ -21,8 +47,7 @@ test('双浏览器协作、刷新恢复、结算和退出', async ({ browser }, 
     await expect(b.getByText('已连接', { exact: true })).toBeVisible()
     await a.getByTestId('create-room').click()
     const id = await a.getByTestId('active-room-code').innerText()
-    await b.getByTestId('room-code').fill(id)
-    await b.getByRole('button', { name: '加入 →', exact: true }).click()
+    await b.getByTestId(`lobby-room-${id}`).getByRole('button', { name: '加入房间 →', exact: true }).click()
     await expect(a.locator('.players')).toContainText('小雨')
     await a.getByText('开发与平台测试面板', { exact: false }).click()
     await a.getByLabel('下一关固定种子（可选）').fill('42')
@@ -39,6 +64,8 @@ test('双浏览器协作、刷新恢复、结算和退出', async ({ browser }, 
       await expect.poll(async () => (await (await a.request.get('/api/session')).json()).room.round.moves).toBe(i + 1)
       if (i === 0) {
         await b.reload()
+        await expect(b.getByTestId('room-lobby')).toBeVisible()
+        await b.locator('.lobby-membership').getByRole('button', { name: '返回房间 →' }).click()
         await expect(b.getByTestId('active-room-code')).toHaveText(id)
         await expect(b.getByText('已连接', { exact: true })).toBeVisible()
         await expect(a.locator('.players')).toContainText('小雨')

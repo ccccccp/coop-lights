@@ -50,6 +50,7 @@ export interface RoundSnapshot {
 export interface RoomSnapshot {
   id: string
   platformInstanceId: string | null
+  context: RoomContext | null
   hostId: string
   maxPlayers: number
   status: 'waiting' | 'playing' | 'finished'
@@ -57,6 +58,26 @@ export interface RoomSnapshot {
   players: Player[]
   round: RoundSnapshot | null
   lastMove: { nickname: string; cell: number; at: number } | null
+}
+export interface RoomContext {
+  type: 1 | 2 | 3 | 4
+  id: string
+}
+export interface LobbyRoom {
+  id: string
+  context: RoomContext | null
+  status: RoomSnapshot['status']
+  maxPlayers: number
+  hostName: string
+  players: Pick<Player, 'nickname' | 'avatarUrl' | 'online' | 'ready'>[]
+  isCurrentContext: boolean
+  canJoin: boolean
+}
+export interface LobbySnapshot {
+  revision: number
+  context: RoomContext | null
+  rooms: LobbyRoom[]
+  canCreate: boolean
 }
 export interface GameUser {
   id: string
@@ -67,6 +88,7 @@ export interface GameUser {
 }
 export interface PlatformContext {
   mode: 'standalone' | 'kook'
+  context?: RoomContext | null
   instanceId: string | null
   capabilities: string[]
   authorizedScopes: string[]
@@ -88,6 +110,7 @@ export interface SessionResponse {
 }
 export type ServerEvent =
   | { type: 'connected'; protocolVersion: number; room: RoomSnapshot | null }
+  | { type: 'lobby.snapshot'; lobby: LobbySnapshot }
   | { type: 'room.snapshot'; room: RoomSnapshot }
   | {
       type: 'command.result'
@@ -107,6 +130,7 @@ export interface PlatformAdapter {
   ): Promise<{ status: 'logged_in'; session: SessionResponse } | { status: 'cancelled' }>
   logout(): Promise<void>
   resolveInvite?(): Promise<void>
+  refreshContext?(): Promise<void>
   invite(
     roomId: string
   ): Promise<{ status: 'submitted' | 'cancelled'; sentCount?: number; failedCount?: number; url?: string }>

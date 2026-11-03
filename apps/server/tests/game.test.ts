@@ -138,6 +138,28 @@ describe('灯阵与关卡', () => {
 })
 
 describe('真实 HTTP 与 WebSocket', () => {
+  test('大厅连接收到初始列表和创建、准备、离房删除推送，重连取得最新列表', async () => {
+    const f = await fixture()
+    const a = await f.login('阿青'),
+      b = await f.login('大厅观察者')
+    const ca = await f.connect(a.cookie),
+      cb = await f.connect(b.cookie)
+    await waitFor(() => cb.events.some((e) => e.type === 'lobby.snapshot'))
+    const created = await f.http('/api/rooms', a.cookie, {})
+    const id = created.data.room.id
+    const latest = () =>
+      cb.events.filter((e) => e.type === 'lobby.snapshot').at(-1) as Extract<ServerEvent, { type: 'lobby.snapshot' }>
+    await waitFor(() => latest()?.lobby.rooms.some((r) => r.id === id))
+    await ca.command(cmd(id, { type: 'room.ready', ready: true }))
+    await waitFor(() => !!latest()?.lobby.rooms.find((r) => r.id === id)?.players[0].ready)
+    const replacement = await f.connect(b.cookie)
+    await waitFor(() =>
+      replacement.events.some((e) => e.type === 'lobby.snapshot' && e.lobby.rooms.some((r) => r.id === id))
+    )
+    await f.http(`/api/rooms/${id}/leave`, a.cookie, {})
+    await waitFor(() => replacement.events.some((e) => e.type === 'lobby.snapshot' && e.lobby.rooms.length === 0))
+    expect((await f.http('/api/lobby', b.cookie)).data.rooms).toEqual([])
+  })
   test('未登录、错误来源、真实平台未配置时不放行本地身份', async () => {
     const f = await fixture()
     expect((await f.http('/api/session')).status).toBe(401)

@@ -4,6 +4,10 @@ import { solve } from '../../apps/server/src/board'
 
 type FixtureWindow = Window & { sdkFixture: { loaded(): number; calls: string[] } }
 
+test.beforeEach(async ({ request }) => {
+  await request.post('/mock/reset')
+})
+
 function game(page: Page) {
   return page.frameLocator('#game')
 }
@@ -323,8 +327,7 @@ test('邀请房间满员或结束后返回主页，只自动加入一次，不�
     await expect(game(page).getByRole('status')).toContainText(message)
     await expect(game(page).getByTestId('create-room')).toBeEnabled()
     await expect(game(page).getByTestId('active-room-code')).toHaveCount(0)
-    await expect(game(page).getByTestId('room-code')).toHaveValue('')
-    await game(page).getByTestId('room-code').fill('ABC234')
+    await expect(game(page).getByTestId('room-code')).toHaveCount(0)
     expect(joins).toBe(1)
   }
 })
@@ -349,7 +352,8 @@ test('接受邀请加入后主动离开，不因同一启动的roomId再次自�
     await expect(game(b).getByTestId('active-room-code')).toHaveText(room)
     await game(b).getByRole('button', { name: '离开房间', exact: true }).click()
     await expect(game(b).getByTestId('create-room')).toBeVisible()
-    await game(b).getByTestId('room-code').fill('ABC234')
+    await expect(game(b).getByTestId(`lobby-room-${room}`)).toBeVisible()
+    await expect(game(b).getByTestId('create-room')).toBeDisabled()
     expect(joins).toBe(1)
   } finally {
     await Promise.all(contexts.map((context) => context.close()))
@@ -392,11 +396,11 @@ test('context没有邀请房间时留在主页，不用SDK的roomId代替', asyn
   await page.goto('https://localhost:5190/?player=bob&spoof-room=FAKE22')
   await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家小林')
   await expect(game(page).getByTestId('create-room')).toBeEnabled()
-  await expect(game(page).getByTestId('room-code')).toHaveValue('')
+  await expect(game(page).getByTestId('room-code')).toHaveCount(0)
   expect(joins).toBe(0)
 })
 
-test('普通登录不查context，独立log页按最近3天倒序显示入参、响应和状态', async ({ page }) => {
+test('仅基本资料授权仍可登录，独立log页按最近3天倒序显示入参、响应和状态', async ({ page }) => {
   await page.goto('https://localhost:5190/?basic-only')
   await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家阿青')
   await page.goto('https://127.0.0.1:5190/log')
@@ -426,6 +430,59 @@ test('普通登录不查context，独立log页按最近3天倒序显示入参、
   await expect(row.locator('pre').nth(1)).toContainText('[REDACTED]')
 })
 
+test('频道大厅实时发现同上下文房间、阻止重复建房，其他上下文仅可查看，普通重开先显示大厅', async ({
+  browser,
+}, testInfo) => {
+  const contexts = await Promise.all(Array.from({ length: 3 }, () => browser.newContext({ ignoreHTTPSErrors: true })))
+  const pages = await Promise.all(contexts.map((c) => c.newPage()))
+  const [a, b, c] = pages
+  const errors: string[] = []
+  for (const page of pages) {
+    page.on('pageerror', (error) => errors.push(error.message))
+    await page.route('https://avatars.test/**', (route) => route.abort())
+  }
+  try {
+    await a.goto('https://localhost:5190/?player=alice&text&channel=team-text')
+    await b.goto('https://localhost:5190/?player=bob&text&channel=team-text')
+    await c.goto('https://localhost:5190/?player=carol&channel=team-voice&instance=other-instance')
+    for (const page of pages) await expect(game(page).getByTestId('create-room')).toBeEnabled()
+    await game(a).getByTestId('create-room').click()
+    const id = await game(a).getByTestId('active-room-code').innerText()
+    const bCard = game(b).getByTestId(`lobby-room-${id}`)
+    const cCard = game(c).getByTestId(`lobby-room-${id}`)
+    await expect(bCard).toContainText('1 / 4 人')
+    await expect(bCard.getByRole('button', { name: '加入房间 →' })).toBeEnabled()
+    await expect(game(b).getByTestId('create-room')).toBeDisabled()
+    await expect(cCard).toContainText('仅可查看')
+    await expect(cCard.getByRole('button')).toHaveCount(0)
+    await game(a).getByRole('button', { name: '我准备好了', exact: true }).click()
+    await expect(bCard).toContainText('已准备')
+    await game(a).getByTestId('start-round').click()
+    await expect(bCard).toContainText('点灯中')
+    await game(c).getByTestId('create-room').click()
+    const otherId = await game(c).getByTestId('active-room-code').innerText()
+    await expect(game(b).getByTestId(`lobby-room-${otherId}`)).toContainText('仅可查看')
+    await b.screenshot({ path: testInfo.outputPath('context-lobby-desktop.png'), fullPage: true })
+    await b.setViewportSize({ width: 430, height: 1000 })
+    await b.screenshot({ path: testInfo.outputPath('context-lobby-narrow.png'), fullPage: true })
+    await bCard.getByRole('button', { name: '加入房间 →' }).click()
+    await expect(game(b).getByTestId('active-room-code')).toHaveText(id)
+    await a.reload()
+    await expect(game(a).getByTestId('room-lobby')).toBeVisible()
+    await expect(game(a).getByTestId(`lobby-room-${id}`)).toContainText('2 / 4 人')
+    await game(a).locator('.lobby-membership').getByRole('button', { name: '返回房间 →' }).click()
+    await expect(game(a).getByTestId('active-room-code')).toHaveText(id)
+    await game(b).getByRole('button', { name: '离开房间', exact: true }).click()
+    await expect(bCard).toContainText('1 / 4 人')
+    await game(a).getByRole('button', { name: '离开房间', exact: true }).click()
+    await expect(bCard).toHaveCount(0)
+    await expect(game(b).getByTestId('create-room')).toBeEnabled()
+    expect(errors).toEqual([])
+  } finally {
+    await Promise.all(contexts.map((c) => c.close()))
+  }
+})
+
 test('邀请context失败保留基本登录并提示回主页，可在日志页看到失败状态及返回', async ({ page }) => {
   await page.route('**/api/kook/invite/resolve', (route) =>
     route.fulfill({
@@ -437,7 +494,8 @@ test('邀请context失败保留基本登录并提示回主页，可在日志页�
   await page.goto('https://localhost:5190/?player=bob&room=ABC234')
   await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家小林')
   await expect(game(page).getByRole('status')).toContainText('已登录，暂时无法加入邀请房间')
-  await expect(game(page).getByTestId('create-room')).toBeEnabled()
+  await expect(game(page).getByTestId('create-room')).toBeDisabled()
+  await expect(game(page).getByTestId('room-lobby')).toBeVisible()
 })
 
 test('KOOK已确认受邀但未返回room_id时保留登录、提示缺房间，禁止猜测实例或会话编号入房', async ({ page }) => {
@@ -445,7 +503,11 @@ test('KOOK已确认受邀但未返回room_id时保留登录、提示缺房间，
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ instanceId: 'fixture-instance', invitedRoomId: null }),
+      body: JSON.stringify({
+        instanceId: 'fixture-instance',
+        context: { type: 2, id: 'fixture-channel' },
+        invitedRoomId: null,
+      }),
     })
   )
   let joins = 0

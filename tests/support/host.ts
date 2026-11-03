@@ -5,8 +5,10 @@ import {
 } from '@kookapp/kook-bridge-channel'
 
 const params = new URLSearchParams(location.search)
-const player = params.get('player') === 'bob' ? 'bob' : 'alice'
+const player = ['bob', 'carol'].includes(params.get('player') ?? '') ? params.get('player')! : 'alice'
 const roomId = params.get('room') || undefined
+const instanceId = params.get('instance') || 'fixture-instance'
+const roomContext = { type: params.has('text') ? 1 : 2, id: params.get('channel') || 'fixture-channel' }
 const supported = [
   'social.getFriendsAndDms',
   'channel.getMembers',
@@ -60,13 +62,13 @@ function register() {
       success({
         contractVersion: 1,
         gameCode: 'lights-sdk-fixture',
-        instanceId: 'fixture-instance',
+        instanceId,
         platform: 'web',
         capabilities: supported,
         permissionVersion: 'fixture-v1',
         availableScopes: params.has('core') ? [] : params.has('basic-only') ? ['get_user_info'] : scopes,
         context: {
-          contextType: 'voice_channel',
+          contextType: roomContext.type === 1 ? 'text_channel' : 'voice_channel',
           launchSource: roomId || params.has('spoof-room') ? 'invite' : 'appLauncher',
           ...(params.has('spoof-room') ? { roomId: params.get('spoof-room')! } : roomId ? { roomId } : {}),
         },
@@ -79,7 +81,7 @@ function register() {
       const response = await fetch('/mock/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ player, roomId }),
+        body: JSON.stringify({ player, roomId, instanceId, context: roomContext }),
       })
       if (!response.ok) throw new Error('Mock code service failed')
       const { code } = await response.json()

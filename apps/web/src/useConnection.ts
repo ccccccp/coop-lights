@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import type { Command, RoomSnapshot, ServerEvent } from '@lights/contracts'
+import type { Command, LobbySnapshot, RoomSnapshot, ServerEvent } from '@lights/contracts'
 
 import { api } from './api'
 
@@ -8,13 +8,14 @@ export function useConnection(
   userId: string | undefined,
   onRoom: (room: RoomSnapshot | null) => void,
   onError: (text: string) => void,
-  onSaved: () => void
+  onSaved: () => void,
+  onLobby: (lobby: LobbySnapshot | null) => void
 ) {
   const [state, setState] = useState('未连接')
   const [generation, setGeneration] = useState(0)
   const wsRef = useRef<WebSocket | null>(null)
-  const callbacks = useRef({ onRoom, onError, onSaved })
-  callbacks.current = { onRoom, onError, onSaved }
+  const callbacks = useRef({ onRoom, onError, onSaved, onLobby })
+  callbacks.current = { onRoom, onError, onSaved, onLobby }
   const pending = useRef(
     new Map<
       string,
@@ -61,8 +62,11 @@ export function useConnection(
         ws.onmessage = (event) => {
           if (!alive || ws !== current) return
           const data = JSON.parse(event.data) as ServerEvent
+          if (data.type === 'lobby.snapshot') callbacks.current.onLobby(data.lobby)
+          if (data.type === 'room.left' && data.reason.startsWith(userId + ':')) callbacks.current.onRoom(null)
           if (data.type === 'connected') {
             attempt = 0
+            callbacks.current.onLobby(null)
             callbacks.current.onRoom(data.room)
             setState('已连接')
           }

@@ -1,6 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto'
 
-import type { Command, GameUser, RoomSnapshot, ServerEvent } from '@lights/contracts'
+import type { Command, GameUser, LobbySnapshot, RoomContext, RoomSnapshot, ServerEvent } from '@lights/contracts'
 
 import { generateBoard, solve, toggle } from './board'
 import { GameError, check } from './errors'
@@ -19,11 +19,14 @@ export class Rooms {
   private rooms = new Map<string, Room>()
   private members = new Map<string, string>()
   private tails = new Map<string, Promise<unknown>>()
+  private lobbyRevision = 0
+  private lobbySignatures = new Map<string, string>()
   constructor(
     private repo: Repository,
     private maxPlayers: number,
     private graceMs: number,
-    private broadcast: (id: string, event: ServerEvent) => void
+    private broadcast: (id: string, event: ServerEvent) => void,
+    private lobbyChanged: () => void = () => {}
   ) {}
   private queue<T>(id: string, job: () => Promise<T> | T): Promise<T> {
     const previous = this.tails.get(id) ?? Promise.resolve()
@@ -44,6 +47,54 @@ export class Rooms {
     const id = this.members.get(userId)
     return id ? this.snapshot(id) : null
   }
+  private sameContext(a: RoomContext | null, b: RoomContext | null) {
+    return a?.type === b?.type && a?.id === b?.id
+  }
+  private summaries() {
+    return [...this.rooms.values()]
+      .filter((r) => r.snapshot.players.length > 0)
+      .map(({ snapshot: s }) => ({
+        id: s.id,
+        context: s.context,
+        status: s.status,
+        maxPlayers: s.maxPlayers,
+        hostName: s.players.find((p) => p.id === s.hostId)?.nickname ?? '',
+        players: s.players.map(({ nickname, avatarUrl, online, ready }) => ({ nickname, avatarUrl, online, ready })),
+      }))
+  }
+  lobby(context: RoomContext | null, userId: string, kook: boolean): LobbySnapshot {
+    const rooms = this.summaries()
+      .filter((r) => (kook ? r.context !== null : r.context === null))
+      .map((r) => {
+        const isCurrentContext = this.sameContext(r.context, context)
+        return {
+          ...r,
+          isCurrentContext,
+          canJoin: isCurrentContext && (!kook || context !== null) && r.players.length < r.maxPlayers,
+        }
+      })
+    return structuredClone({
+      revision: this.lobbyRevision,
+      context,
+      rooms,
+      canCreate:
+        (!kook || context !== null) &&
+        !this.members.has(userId) &&
+        (!kook || !rooms.some((r) => r.isCurrentContext && r.players.length < r.maxPlayers)),
+    })
+  }
+  private publishLobby() {
+    const summaries = this.summaries()
+    const next = new Map(summaries.map((s) => [s.id, JSON.stringify(s)]))
+    if (
+      next.size === this.lobbySignatures.size &&
+      [...next].every(([id, value]) => this.lobbySignatures.get(id) === value)
+    )
+      return
+    this.lobbySignatures = next
+    this.lobbyRevision++
+    this.lobbyChanged()
+  }
   private requireRoom(id: string) {
     const r = this.rooms.get(id)
     check(r, 'ROOM_NOT_FOUND', '房间已结束或不存在', 404)
@@ -55,6 +106,7 @@ export class Rooms {
       type: 'room.snapshot',
       room: structuredClone(r.snapshot),
     })
+    this.publishLobby()
   }
   private add(r: Room, user: GameUser) {
     const s = r.snapshot
@@ -75,8 +127,15 @@ export class Rooms {
     this.members.set(user.id, s.id)
     this.publish(r)
   }
-  create(user: GameUser, instanceId: string | null) {
+  create(user: GameUser, instanceId: string | null, context: RoomContext | null = null) {
     check(!this.members.has(user.id), 'ALREADY_IN_ROOM', '请先离开当前房间')
+    // 同步检查并立即占位，两个并发建房请求不能绕过上下文容量规则。
+    if (context)
+      check(
+        !this.summaries().some((r) => this.sameContext(r.context, context) && r.players.length < r.maxPlayers),
+        'CONTEXT_ROOM_AVAILABLE',
+        '当前上下文还有空位，请先加入已有房间'
+      )
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
     let id: string
     do {
@@ -86,6 +145,7 @@ export class Rooms {
       snapshot: {
         id,
         platformInstanceId: instanceId,
+        context: context ? { ...context } : null,
         hostId: user.id,
         maxPlayers: this.maxPlayers,
         status: 'waiting',
@@ -105,10 +165,25 @@ export class Rooms {
     this.add(r, user)
     return this.snapshot(id)!
   }
-  join(id: string, user: GameUser, instanceId: string | null) {
+  join(id: string, user: GameUser, instanceId: string | null, context?: RoomContext | null, invited = false) {
     return this.queue(id, () => {
       const r = this.requireRoom(id)
-      check(r.snapshot.platformInstanceId === instanceId, 'INSTANCE_MISMATCH', '房间不属于当前平台实例', 403)
+      if (!invited) {
+        if (context)
+          check(
+            this.sameContext(r.snapshot.context, context),
+            'CONTEXT_MISMATCH',
+            '其他上下文的房间仅可查看，请从对应频道打开游戏',
+            403
+          )
+        else
+          check(
+            r.snapshot.platformInstanceId === instanceId && r.snapshot.context === null,
+            'INSTANCE_MISMATCH',
+            '房间不属于当前平台实例',
+            403
+          )
+      }
       if (this.members.get(user.id) !== id) this.add(r, user)
       return this.snapshot(id)!
     })
@@ -154,17 +229,18 @@ export class Rooms {
       if (!r || this.members.get(userId) !== id) return
       r.snapshot.players = r.snapshot.players.filter((p) => p.id !== userId)
       r.connections.delete(userId)
-      this.members.delete(userId)
       this.broadcast(id, {
         type: 'room.left',
         roomId: id,
         reason: `${userId}:${reason}`,
       })
+      this.members.delete(userId)
       if (r.snapshot.players.length === 0 && !r.pendingSettlement) this.rooms.delete(id)
       else {
         if (r.snapshot.hostId === userId) r.snapshot.hostId = r.snapshot.players[0]?.id ?? ''
         this.publish(r)
       }
+      this.publishLobby()
     })
   }
   async sweep() {
@@ -172,7 +248,10 @@ export class Rooms {
       if (r.pendingSettlement && r.saveAttempts < 3 && r.nextSaveAt <= Date.now()) {
         await this.queue(id, async () => {
           if (r.pendingSettlement && r.nextSaveAt <= Date.now()) await this.save(r)
-          if (!r.pendingSettlement && r.snapshot.players.length === 0) this.rooms.delete(id)
+          if (!r.pendingSettlement && r.snapshot.players.length === 0) {
+            this.rooms.delete(id)
+            this.publishLobby()
+          }
         })
       }
     const expired: Array<[string, string]> = []
@@ -193,6 +272,7 @@ export class Rooms {
             if (r.snapshot.hostId === uid) r.snapshot.hostId = r.snapshot.players[0]?.id ?? ''
             this.publish(r)
           }
+          this.publishLobby()
         }
       })
   }

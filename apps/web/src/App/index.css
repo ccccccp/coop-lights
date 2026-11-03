@@ -292,52 +292,110 @@ main {
 .section-heading p:last-child {
   color: var(--muted);
 }
-.lobby-grid {
+.lobby-room-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  margin-top: 30px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 310px), 1fr));
+  gap: 16px;
 }
-.lobby-card {
-  padding: 30px;
+.lobby-room-card {
+  padding: 22px;
   background: #192720;
   border: 1px solid var(--border);
   border-radius: 16px;
 }
-.card-number {
-  display: block;
-  font-size: 10px;
-  letter-spacing: 2px;
-  color: var(--muted);
-  margin-bottom: 30px;
+.lobby-room-card.readonly {
+  background: #15211d;
 }
-.lobby-card p {
-  color: #98af9a;
-  font-size: 13px;
-  margin-bottom: 28px;
-}
-.join-row {
+.lobby-toolbar,
+.lobby-membership,
+.lobby-section-heading,
+.lobby-room-top,
+.lobby-room-bottom {
   display: flex;
-  gap: 10px;
-}
-.join-row input {
-  letter-spacing: 3px;
-  font-size: 18px;
-}
-.join-row button {
-  flex-shrink: 0;
-}
-.lobby-footer {
-  display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.lobby-toolbar {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 18px;
+  overflow-wrap: anywhere;
+}
+.lobby-toolbar p,
+.lobby-rule,
+.lobby-room-context {
   color: var(--muted);
   font-size: 12px;
-  margin-top: 28px;
+  margin: 8px 0 16px;
 }
-.lobby-footer b {
+.lobby-membership {
+  padding: 16px;
+  margin-top: 18px;
+  border: 1px solid #526844;
+  border-radius: 12px;
+}
+.lobby-section-heading {
+  margin: 30px 0 12px;
+}
+.lobby-section-heading h2 {
+  font-size: 20px;
+  margin: 0;
+}
+.lobby-section-heading small,
+.readonly-label,
+.lobby-room-top > span,
+.lobby-room-bottom > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.lobby-room-top strong {
+  overflow-wrap: anywhere;
+}
+.lobby-room-top > span {
   color: var(--lime);
-  font-size: 22px;
-  margin-right: 5px;
+}
+.lobby-room-context {
+  overflow-wrap: anywhere;
+}
+.lobby-room-players {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 20px 0;
+}
+.lobby-room-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.lobby-room-player .user-avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+.lobby-room-player > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.lobby-room-player small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.lobby-room-bottom {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.lobby-empty {
+  padding: 32px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
 }
 .connection-line {
   display: flex;
@@ -816,12 +874,8 @@ main {
   .lobby {
     padding-top: 35px;
   }
-  .lobby-grid {
+  .lobby-room-grid {
     grid-template-columns: 1fr;
-  }
-  .lobby-footer {
-    flex-direction: column;
-    gap: 14px;
   }
   .play-layout {
     grid-template-columns: 1fr;

@@ -1,4 +1,4 @@
-import type { RoomSnapshot, SessionResponse } from '@lights/contracts'
+import type { LobbySnapshot, RoomContext, RoomSnapshot, SessionResponse } from '@lights/contracts'
 
 export class ApiError extends Error {
   constructor(
@@ -85,7 +85,14 @@ export const api = {
     })
   },
   resolveInvite: (instanceId: string) =>
-    request<{ instanceId: string; invitedRoomId: string | null }>('/api/kook/invite/resolve', { instanceId }),
+    request<{ instanceId: string; context: RoomContext; invitedRoomId: string | null }>('/api/kook/invite/resolve', {
+      instanceId,
+    }),
+  refreshContext: (instanceId: string) =>
+    request<{ instanceId: string; context: RoomContext; invitedRoomId: string | null }>('/api/kook/context/refresh', {
+      instanceId,
+    }),
+  lobby: () => request<LobbySnapshot>('/api/lobby'),
   create: () => request<{ room: RoomSnapshot }>('/api/rooms', {}),
   join: (id: string) => request<{ room: RoomSnapshot }>(`/api/rooms/${id}/join`, {}),
   leave: (id: string) => request(`/api/rooms/${id}/leave`, {}),

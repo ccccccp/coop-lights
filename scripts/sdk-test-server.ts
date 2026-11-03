@@ -70,7 +70,7 @@ if (isolated) await admin.query(`CREATE SCHEMA ${schema}`)
 await admin.query(`SET search_path TO ${schema}`)
 await admin.query(await readFile(resolve(projectRoot, 'db/migrations/001_initial.sql'), 'utf8'))
 const repo = await new PostgresRepository(base.databaseUrl, schema).init()
-const { app } = await createApp(
+const { app, rooms } = await createApp(
   {
     ...base,
     logAccessKey: 'fixture-log-key',
@@ -98,6 +98,14 @@ const server = createServer({ key: await readFile(key), cert: await readFile(cer
   const url = new URL(req.url ?? '/', `https://${req.headers.host}`)
   try {
     if (url.hostname === 'localhost') {
+      if (url.pathname === '/mock/reset' && req.method === 'POST') {
+        for (const r of rooms.lobby(null, '', true).rooms) {
+          for (const p of rooms.snapshot(r.id)?.players ?? []) await rooms.leave(r.id, p.id)
+        }
+        res.setHeader('Content-Type', 'application/json')
+        res.end('{}')
+        return
+      }
       if (url.pathname === '/' || url.pathname === '/host') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         res.end(hostHtml)
@@ -127,7 +135,9 @@ const server = createServer({ key: await readFile(key), cert: await readFile(cer
         res.setHeader('Content-Type', 'application/json')
         res.setHeader('Cache-Control', 'no-store')
         if (url.pathname === '/mock/code')
-          res.end(JSON.stringify({ code: oauth.issue(data.player, data.roomId ?? null) }))
+          res.end(
+            JSON.stringify({ code: oauth.issue(data.player, data.roomId ?? null, data.instanceId, data.context) })
+          )
         else {
           if (
             data.hostOrigin !== 'https://localhost:5190' ||

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { GameUser, PlatformAdapter, PlatformContext, RoomSnapshot } from '@lights/contracts'
+import type { GameUser, LobbySnapshot, PlatformAdapter, PlatformContext, RoomSnapshot } from '@lights/contracts'
 
 import { PlatformControls } from './components/PlatformControls'
+import { RoomLobby } from './components/RoomLobby'
 import { UserAvatar } from './components/UserAvatar'
 
 import { LogPage } from '../LogPage'
@@ -28,7 +29,11 @@ export function App() {
     [user, setUser] = useState<GameUser | null>(null)
   const [room, setRoom] = useState<RoomSnapshot | null>(null),
     [nickname, setNickname] = useState('')
-  const [roomCode, setRoomCode] = useState(() => new URL(location.href).searchParams.get('room')?.toUpperCase() ?? '')
+  const [lobby, setLobby] = useState<LobbySnapshot | null>(null)
+  const [showLobby, setShowLobby] = useState(true)
+  const directRoom = useRef(
+    new URL(location.href).searchParams.get('roomId') ?? new URL(location.href).searchParams.get('room')
+  )
   const [platform, setPlatform] = useState<PlatformContext | null>(null)
   const [bootAttempt, setBootAttempt] = useState(0)
   const [health, setHealth] = useState<Awaited<ReturnType<typeof api.health>> | null>(null)
@@ -43,6 +48,19 @@ export function App() {
   const inviteAttempt = useRef<string | null>(null)
   const invitationPending = useRef(false)
   const autoLoginAttempt = useRef<PlatformAdapter | null>(null)
+  const updateLobby = useCallback(
+    (next: LobbySnapshot | null) =>
+      setLobby((prev) =>
+        prev &&
+        next &&
+        prev.revision > next.revision &&
+        prev.context?.id === next.context?.id &&
+        prev.context?.type === next.context?.type
+          ? prev
+          : next
+      ),
+    []
+  )
   const updateRoom = useCallback(
     (next: RoomSnapshot | null) =>
       setRoom((prev) => (prev && next && prev.id === next.id && prev.version > next.version ? prev : next)),
@@ -61,7 +79,8 @@ export function App() {
     platform?.status === 'ready' ? user?.id : undefined,
     updateRoom,
     setNotice,
-    refreshUser
+    refreshUser,
+    updateLobby
   )
   useEffect(() => {
     let alive = true
@@ -70,6 +89,8 @@ export function App() {
     inviteAttempt.current = null
     invitationPending.current = false
     setBooted(false)
+    setLobby(null)
+    setShowLobby(true)
     void (async () => {
       try {
         const h = await api.health()
@@ -81,11 +102,11 @@ export function App() {
           if (!alive) return
           if (event.type === 'context') {
             setPlatform(event.platform)
-            if (event.platform.invitedRoomId) setRoomCode(event.platform.invitedRoomId)
           } else {
             sessionGeneration.current++
             setUser(null)
             setRoom(null)
+            setLobby(null)
             setNotice(event.message)
           }
         })
@@ -177,19 +198,44 @@ export function App() {
           setRoom(null)
           setNotice('已登录，暂时无法加入邀请房间：' + messageOf(error))
         }
+      } else if (current.refreshContext) {
+        try {
+          await current.refreshContext()
+        } catch (error) {
+          setNotice('已登录，暂时无法读取房间大厅：' + messageOf(error))
+        }
       }
     })
   }
   const kook = health?.platform.mode === 'kook'
   const loginAvailable = !!health?.oauthConfigured && !!platform?.availableScopes.includes('get_user_info')
   useEffect(() => {
-    const target = platform?.invitedRoomId
+    if (!user || !connected || (kook && !platform?.context)) return
+    let alive = true
+    const generation = sessionGeneration.current
+    void api
+      .lobby()
+      .then((value) => {
+        if (alive && generation === sessionGeneration.current) updateLobby(value)
+      })
+      .catch((error) => {
+        if (alive) setNotice(messageOf(error))
+      })
+    return () => {
+      alive = false
+    }
+  }, [user?.id, connected, kook, platform?.context?.type, platform?.context?.id])
+  useEffect(() => {
+    const target = kook ? platform?.invitedRoomId : directRoom.current?.toUpperCase()
     const current = adapter.current
-    if (!kook || !booted || !user || !target || !connected || busy || !current) return
+    if (!booted || !user || !target || !connected || busy || !current) return
     const key = user.id + ':' + target
     if (invitationPending.current || inviteAttempt.current === key) return
     inviteAttempt.current = key
-    if (room?.id === target) return
+    if (room?.id === target) {
+      setShowLobby(false)
+      return
+    }
     invitationPending.current = true
     const generation = sessionGeneration.current
     void action(async () => {
@@ -205,14 +251,15 @@ export function App() {
         const result = await api.join(target)
         if (!valid()) return
         updateRoom(result.room)
+        setShowLobby(false)
         setNotice('已加入朋友邀请的点灯房间')
       } catch (error) {
         if (!valid()) return
         if (leftPreviousRoom) setRoom(null)
-        setRoomCode('')
+        setShowLobby(true)
         setNotice(
           error instanceof ApiError && error.code === 'ROOM_FULL'
-            ? '朋友的房间已满，已返回主页，你可以创建新房间或加入其他房间。'
+            ? '朋友的房间已满，已返回主页，请在大厅选择可加入的房间。'
             : error instanceof ApiError && error.code === 'ROOM_NOT_FOUND'
               ? '朋友的房间已结束，已返回主页。'
               : messageOf(error)
@@ -377,81 +424,42 @@ export function App() {
               </p>
             </form>
           </section>
-        ) : !room ? (
-          <section className="lobby">
-            <div className="section-heading">
-              <p className="eyebrow">THE NEXT LIGHT IS YOURS</p>
-              <h1>
-                你好，{user.nickname}
-                <span>。</span>
-              </h1>
-              <p>新建一间房，或加入朋友的点灯小队。</p>
-            </div>
-            <div className="lobby-grid">
-              <article className="lobby-card">
-                <span className="card-number">01 / CREATE</span>
-                <h2>组建点灯小队</h2>
-                <p>
-                  从一盏灯开始，最多四人共同解谜。
-                  <br />
-                  房间创建后就可以邀请朋友。
-                </p>
-                <button
-                  className="primary"
-                  data-testid="create-room"
-                  disabled={busy || !connected}
-                  onClick={() =>
-                    void action(async () => {
-                      const r = await api.create()
-                      updateRoom(r.room)
-                    })
-                  }
-                >
-                  创建房间 <span>＋</span>
-                </button>
-              </article>
-              <form
-                className="lobby-card"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  void action(async () => {
-                    const r = await api.join(roomCode.trim().toUpperCase())
-                    updateRoom(r.room)
-                  })
-                }}
-              >
-                <span className="card-number">02 / JOIN</span>
-                <h2>加入朋友的房间</h2>
-                <p>
-                  输入朋友分享的 6 位房间号。
-                  <br />
-                  游戏开始后也可以加入。
-                </p>
-                <label className="sr-only" htmlFor="room-code">
-                  房间号
-                </label>
-                <div className="join-row">
-                  <input
-                    id="room-code"
-                    data-testid="room-code"
-                    value={roomCode}
-                    maxLength={6}
-                    placeholder="ABC234"
-                    onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                  />
-                  <button className="secondary" disabled={busy || !connected || roomCode.length !== 6}>
-                    加入 →
-                  </button>
-                </div>
-              </form>
-            </div>
-            <div className="lobby-footer">
-              <span>
-                <b>{user.completedRounds}</b> 次累计通关
-              </span>
-              <span>用另一浏览器或无痕窗口，以第二位玩家加入。</span>
-            </div>
-          </section>
+        ) : !room || showLobby ? (
+          <RoomLobby
+            lobby={kook && !platform?.context ? null : lobby}
+            room={room}
+            busy={busy}
+            connected={connected}
+            kook={kook}
+            onCreate={() =>
+              void action(async () => {
+                const r = await api.create()
+                updateRoom(r.room)
+                setShowLobby(false)
+              })
+            }
+            onJoin={(id) =>
+              void action(async () => {
+                const r = await api.join(id)
+                updateRoom(r.room)
+                setShowLobby(false)
+              })
+            }
+            onResume={() => setShowLobby(false)}
+            onLeave={() =>
+              void action(async () => {
+                await api.leave(room!.id)
+                setRoom(null)
+                refreshUser()
+              })
+            }
+            onRefresh={() =>
+              void action(async () => {
+                await adapter.current?.refreshContext?.()
+                updateLobby(await api.lobby())
+              })
+            }
+          />
         ) : (
           <section className="game-view">
             <div className="game-heading">
@@ -460,6 +468,9 @@ export function App() {
                 <h1>{room.status === 'finished' ? '每一盏，都亮了。' : '一盏接着一盏。'}</h1>
               </div>
               <div className="room-tools">
+                <button className="text-button" onClick={() => setShowLobby(true)}>
+                  房间大厅
+                </button>
                 <span className="room-code">
                   房间 <b data-testid="active-room-code">{room.id}</b>
                 </span>

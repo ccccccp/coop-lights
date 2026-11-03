@@ -1,10 +1,10 @@
 # SDK 接入说明
 
-更新：2026-10-26。游戏已接收 KOOK 宿主启动消息；打开、加载、续期和退出已通过生产宿主代码与实际游戏页面的受控验证。真实测试环境尚受登录风控阻塞，未完成真实后端验收。
+更新：2026-11-03。已实现上下文房间大厅，规则及本地验证见 [README](../README.md#房间大厅与上下文准入)。真实 KOOK 后端与双账号验收仍需在平台环境执行。
 
 ## 前端启动与登录
 
-`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.0-alpha.2` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
+`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.3` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
 
 在游戏根目录 `.env` 配置前端宿主白名单，然后重新构建游戏：
 
@@ -54,7 +54,7 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 1. 游戏生成仅驻留内存的随机 `clientNonce`，调用原有 `/api/kook/login/start`；后端签发随机 state，以 nonce 哈希和请求来源绑定本次事务。未传 nonce 的旧调用继续使用 HttpOnly Cookie 绑定。
 2. SDK 就绪后自动调用一次 `sdk.session.get({ state, scopes })`；取消作为正常结果返回，页面保留重试入口且不会循环弹出授权。
-3. 游戏提交 code、state、clientNonce 到原有 /api/kook/login/complete，instanceId 为兼容的可选字段，不触发实例查询。普通打开仅申请 get_user_info。
+3. 游戏提交 code、state、clientNonce 到原有 /api/kook/login/complete，instanceId 为兼容的可选字段，不触发实例查询。默认申请宿主可用的 get_user_info 和 mini_game.context。
 4. 后端一次性消费 state，交换 token 并读取用户身份后即创建游戏会话，不调用 context。OAuth token 仅保存在游戏后端内存，游戏前端只持有自己的游戏会话。
 5. 游戏继续使用已有的房间 HTTP API、一次性 WebSocket 票据及服务端点灯协议。
 
@@ -64,14 +64,14 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 `/api/kook/login/cancel` 同样支持 nonce，能够在 Cookie 缺失时取消在途换码或注销它已创建的会话。Bearer 无效时不会退回 Cookie 冒用另一会话；WebSocket 仍只使用原有一次性票据。退出登录、撤销、关闭或登录响应迟到时清理游戏自己的会话；页面刷新后重新由用户授权。数据库中的应用命名空间、身份字段、会话期限和现有三个登录路由均保留。
 
-受邀启动在基本登录成功后，独立调用 /api/kook/invite/resolve 核验 context。room_id 为空显示主页；解析或网络失败提示原因并保留基本登录。服务端以本次 OAuth 用户身份核验请求实例和邀请房间，绝不使用 SDK 或 URL 房间号补齐可信数据。普通建房、手动输入房间号及基本登录不依赖 context。
+普通启动在基本登录成功后，独立调用 `/api/kook/context/refresh` 核验 context，再通过 `/api/lobby` 和 WebSocket `lobby.snapshot` 展示实时大厅。受邀启动调用 `/api/kook/invite/resolve`，仅当可信响应提供邀请房间时自动加入；无目标、满员或结束时显示大厅。服务端以本次 OAuth 用户身份核验请求实例、上下文及邀请房间，不使用 SDK 或 URL 房间号补齐可信数据。KOOK 建房和普通加入均依赖可信 context，其他上下文仅可查看摘要，前端不再提供手动输入房间号的入口。查询失败仍保留基本登录。
 
 ## 已接入的 SDK 能力
 
 | 能力                                | 游戏行为                                                                                   |
 | ----------------------------------- | ------------------------------------------------------------------------------------------ |
 | `ready()` / `onConnectionChanged()` | 读取能力和启动上下文；恢复期间暂停游戏连接，恢复后重新读取上下文                           |
-| `session.get()`                     | 用户主动授权，默认只请求 `profile.basic`；调试面板可追加好友、频道权限                     |
+| `session.get()`                     | SDK 就绪后请求 `get_user_info` 和可用的 `mini_game.context`；取消后支持手动重试            |
 | `lifecycle.reportLoadResult()`      | 欢迎页可用后上报加载成功，每个适配器只成功上报一次                                         |
 | `auth.onStateChanged()`             | 同步权限；撤销后退出游戏会话                                                               |
 | `lifecycle.onStateChanged()`        | 实例关闭后清除会话并停用操作                                                               |
@@ -118,4 +118,4 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 点灯后端要求游戏编号／嵌套实例匹配且实例active，只有 joined_by_invite 与 invite来源同时成立才将六位游戏房间号交给前端自动加入。普通instance来源不会触发入房，也不套用六位房间号校验；不读取旧 data.room_id、invite.room_id 或浏览器房间号作兜底。结构、来源或房间号非法时保留基本登录并显示明确错误。
 
-普通打开仍只完成基本资料登录，不调用context。无需更改SDK公开API、登录协议或数据库结构。日志只对OAuth事务state脱敏，保留instance.state及participant_state业务状态。
+2026-11-03 起，普通打开在基本资料登录后单独查询 context 供大厅准入使用；上述 room 来源区分规则继续沿用。无需更改 SDK 公开 API、登录协议或数据库结构。日志只对 OAuth 事务 state 脱敏，保留 instance.state 及 participant_state 业务状态。

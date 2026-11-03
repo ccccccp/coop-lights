@@ -112,7 +112,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
   function invalidate(message: string): void {
     loginVersion++
     loggedIn = false
-    patch({ message, authorizedScopes: [], participantsRevision: null, invitedRoomId: null })
+    patch({ message, authorizedScopes: [], participantsRevision: null, invitedRoomId: null, context: null })
     emit({ type: 'session_invalidated', message })
     void clearGameSession().catch(() => undefined)
   }
@@ -160,6 +160,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         connectionState: sdk.state,
         status: 'ready',
         message: '',
+        context: null,
       })
       if (!subscribed) {
         subscribed = true
@@ -186,11 +187,27 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
         }
       }
       initialized = true
+      if (loggedIn)
+        await refreshGameContext(false).catch((error) =>
+          patch({ message: error instanceof Error ? error.message : '上下文读取失败' })
+        )
       if (loggedIn) await watchParticipants()
     })().finally(() => {
       readyWork = null
     })
     return readyWork
+  }
+  async function refreshGameContext(invite: boolean): Promise<void> {
+    const sdk = currentClient(),
+      version = loginVersion,
+      epoch = sdk.connection.epoch
+    if (!loggedIn || !context.instanceId) throw new Error('请先完成登录')
+    if (!sdk.hasScope('mini_game.context')) throw new Error('当前授权缺少房间上下文权限，请重新授权后刷新大厅')
+    patch({ context: null })
+    const result = await (invite ? api.resolveInvite(context.instanceId) : api.refreshContext(context.instanceId))
+    if (disposed || version !== loginVersion || sdk.state !== 'connected' || sdk.connection.epoch !== epoch)
+      throw new Error('读取上下文期间游戏连接已变化，请重试')
+    patch({ context: result.context, invitedRoomId: invite ? result.invitedRoomId : null })
   }
 
   return {
@@ -234,10 +251,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
           [
             'get_user_info',
             ...context.authorizedScopes,
-            ...(requested ??
-              (context.launchSource === 'invite' && context.availableScopes.includes('mini_game.context')
-                ? scopes
-                : ['get_user_info'])),
+            ...(requested ?? scopes.filter((scope) => context.availableScopes.includes(scope))),
           ].map((scope) => (scope === 'profile.basic' ? 'get_user_info' : scope))
         ),
       ]
@@ -290,20 +304,16 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
       }
     },
     async resolveInvite() {
-      const sdk = currentClient(),
-        version = loginVersion,
-        epoch = sdk.connection.epoch
-      if (!loggedIn || !context.instanceId) throw new Error('请先完成登录')
-      const result = await api.resolveInvite(context.instanceId)
-      if (disposed || version !== loginVersion || sdk.state !== 'connected' || sdk.connection.epoch !== epoch)
-        throw new Error('邀请期间游戏连接已变化')
-      if (!result.invitedRoomId) throw new Error('KOOK邀请未返回点灯房间号，暂时无法自动加入，请向邀请人获取房间号')
-      patch({ invitedRoomId: result.invitedRoomId })
+      await refreshGameContext(true)
+      if (!context.invitedRoomId) throw new Error('KOOK邀请未返回点灯房间号，已返回房间大厅')
+    },
+    async refreshContext() {
+      await refreshGameContext(false)
     },
     async logout() {
       loginVersion++
       loggedIn = false
-      patch({ invitedRoomId: null })
+      patch({ invitedRoomId: null, context: null })
       await clearGameSession()
     },
     async invite(roomId) {

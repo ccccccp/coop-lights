@@ -13,6 +13,7 @@ import staticFiles from '@fastify/static'
 import {
   type GameUser,
   PROTOCOL_VERSION,
+  type RoomContext,
   type ServerEvent,
   commandSchema,
   nicknameSchema,
@@ -57,7 +58,15 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     () => app.log.warn('call log persistence unavailable'),
     config.logRetentionDays
   )
-  const grants = new Map<string, { accessToken: string; expiresAt: number; verifiedRoom?: string | null }>()
+  type Grant = {
+    accessToken: string
+    expiresAt: number
+    instanceId?: string
+    context?: RoomContext
+    verifiedRoom?: string | null
+    pending?: Promise<Awaited<ReturnType<typeof readKookContext>>>
+  }
+  const grants = new Map<string, Grant>()
   const httpStarts = new WeakMap<object, number>()
   const nonceSchema = z.string().regex(/^[a-f0-9]{64}$/)
   const cookieOptions = {
@@ -84,9 +93,66 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       clientNonce ? `nonce:${req.headers.origin ?? ''}:${clientNonce}` : `cookie:${req.cookies.lights_oauth ?? ''}`
     )
   }
-  const rooms = new Rooms(repo, config.maxPlayers, config.graceMs, (id, event) => {
-    for (const [uid, c] of clients) if (rooms.forUser(uid)?.id === id) send(c.ws, event)
-  })
+  function sendLobby(c: { ws: WebSocket; session: Session }) {
+    send(c.ws, {
+      type: 'lobby.snapshot',
+      lobby: rooms.lobby(grants.get(c.session.hash)?.context ?? null, c.session.userId, config.mode === 'kook'),
+    })
+  }
+  const rooms = new Rooms(
+    repo,
+    config.maxPlayers,
+    config.graceMs,
+    (id, event) => {
+      for (const [uid, c] of clients) if (rooms.forUser(uid)?.id === id) send(c.ws, event)
+    },
+    () => {
+      for (const c of clients.values()) sendLobby(c)
+    }
+  )
+  async function resolveContext(session: Session, requestId: string, requestedInstanceId?: string) {
+    const grant = grants.get(session.hash)
+    check(grant && grant.expiresAt > Date.now(), 'PLATFORM_GRANT_UNAVAILABLE', '请重新授权后读取房间大厅', 401)
+    const instanceId = requestedInstanceId ?? grant.instanceId
+    check(instanceId, 'PLATFORM_CONTEXT_REQUIRED', '请从 KOOK 频道或私信重新打开游戏', 409)
+    // 串行处理同一会话的查询，避免旧上下文回包覆盖新上下文。
+    const previous = grant.pending
+    const work = (async () => {
+      if (previous) await previous.catch(() => undefined)
+      check(grants.get(session.hash) === grant, 'UNAUTHENTICATED', '游戏登录已失效', 401)
+      grant.context = undefined
+      grant.verifiedRoom = undefined
+      const launch = await readKookContext(config.kook, grant.accessToken, instanceId, callLogs.recorder(requestId))
+      const activeSession = await repo.getSession(session.hash)
+      // 查询返回时再次确认游戏会话仍有效，旧结果不能复活已注销的登录。
+      check(grants.get(session.hash) === grant && activeSession, 'UNAUTHENTICATED', '游戏登录已失效', 401)
+      grant.instanceId = launch.instanceId
+      grant.context = launch.context
+      grant.verifiedRoom = launch.invitedRoomId
+      return launch
+    })()
+    grant.pending = work
+    try {
+      return await work
+    } finally {
+      if (grant.pending === work) grant.pending = undefined
+      const c = clients.get(session.userId)
+      if (c?.session.hash === session.hash) sendLobby(c)
+    }
+  }
+  async function roomContext(session: Session, requestId: string) {
+    if (config.mode !== 'kook') return null
+    const grant = grants.get(session.hash)
+    while (grant?.pending) await grant.pending
+    check(
+      grant && grants.get(session.hash) === grant && grant.expiresAt > Date.now(),
+      'PLATFORM_GRANT_UNAVAILABLE',
+      '请重新授权后读取房间大厅',
+      401
+    )
+    if (!grant?.context) return (await resolveContext(session, requestId)).context
+    return grant.context
+  }
   async function auth(req: FastifyRequest) {
     const token = requestToken(req)
     const session = token ? await repo.getSession(hash(token)) : null
@@ -228,7 +294,11 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
     // 基本登录不依赖平台实例查询；OAuth凭据仅在当前游戏后端内存中驻留。
     await repo.saveSession(session)
     transaction.sessionHash = session.hash
-    grants.set(session.hash, { accessToken: grant.accessToken, expiresAt: session.expiresAt })
+    grants.set(session.hash, {
+      accessToken: grant.accessToken,
+      expiresAt: session.expiresAt,
+      instanceId: input.instanceId,
+    })
     if (transaction.cancelled || transaction.expiresAt <= Date.now()) {
       grants.delete(session.hash)
       await repo.deleteSession(session.hash)
@@ -259,21 +329,17 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
       ...(input.clientNonce ? { gameToken: token } : {}),
     }
   })
-  app.post('/api/kook/invite/resolve', async (req) => {
+  async function refreshContext(req: FastifyRequest) {
     const { session } = await auth(req)
     const { instanceId } = z
       .object({ instanceId: z.string().regex(/^[A-Za-z0-9_-]{1,256}$/) })
       .strict()
       .parse(req.body)
-    const grant = grants.get(session.hash)
-    check(grant && grant.expiresAt > Date.now(), 'PLATFORM_GRANT_UNAVAILABLE', '请重新授权后再接受邀请', 401)
-    grant.verifiedRoom = undefined
-    const launch = await readKookContext(config.kook, grant.accessToken, instanceId, callLogs.recorder(req.id))
-    // 查询返回时再次确认游戏会话仍有效，旧结果不能复活已注销的登录。
-    check(await repo.getSession(session.hash), 'UNAUTHENTICATED', '游戏登录已失效', 401)
-    grant.verifiedRoom = launch.invitedRoomId
-    return launch
-  })
+    requireKook()
+    return resolveContext(session, req.id, instanceId)
+  }
+  app.post('/api/kook/invite/resolve', refreshContext)
+  app.post('/api/kook/context/refresh', refreshContext)
   app.get('/api/logs', async (req) => {
     check(config.logAccessKey, 'LOGS_NOT_CONFIGURED', '请在服务端配置 LOG_ACCESS_KEY 后查询日志', 503)
     const supplied = typeof req.headers['x-log-key'] === 'string' ? req.headers['x-log-key'] : ''
@@ -381,24 +447,31 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
   })
   app.post('/api/rooms', async (req) => {
     const { user, session } = await auth(req)
-    const room = rooms.create(user, session.instanceId),
+    const context = await roomContext(session, req.id)
+    const room = rooms.create(user, grants.get(session.hash)?.instanceId ?? session.instanceId, context),
       c = clients.get(user.id)
     if (c) rooms.connect(user.id, c.id)
     return { room: rooms.snapshot(room.id) }
   })
   app.post<{ Params: { id: string } }>('/api/rooms/:id/join', async (req) => {
     const { user, session } = await auth(req)
-    const id = roomIdSchema.parse(req.params.id),
-      room = await rooms.join(
+    const id = roomIdSchema.parse(req.params.id)
+    const context = await roomContext(session, req.id)
+    const room = await rooms.join(
         id,
         user,
-        grants.get(session.hash)?.verifiedRoom === id
-          ? (rooms.snapshot(id)?.platformInstanceId ?? null)
-          : session.instanceId
+        session.instanceId,
+        context,
+        config.mode === 'kook' && grants.get(session.hash)?.verifiedRoom === id
       ),
       c = clients.get(user.id)
     if (c) rooms.connect(user.id, c.id)
     return { room: rooms.snapshot(room.id) }
+  })
+  app.get('/api/lobby', async (req) => {
+    const { user, session } = await auth(req)
+    const context = await roomContext(session, req.id)
+    return rooms.lobby(context, user.id, config.mode === 'kook')
   })
   app.post<{ Params: { id: string } }>('/api/rooms/:id/leave', async (req) => {
     const { user } = await auth(req)
@@ -473,6 +546,7 @@ export async function createApp(config: Config, repo: Repository, staticRoot?: s
           const room = rooms.forUser(uid)
           // 空快照也必须同步，清除超时退出或服务端重启后的旧房间页面。
           send(ws, { type: 'connected', protocolVersion: PROTOCOL_VERSION, room })
+          sendLobby(clients.get(uid)!)
           return
         }
         const c = clients.get(current.userId)

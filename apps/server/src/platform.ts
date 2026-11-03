@@ -246,7 +246,7 @@ export async function exchangeKookCode(
   }
 }
 
-/** 受邀进入时单独校验；失败不得撤销已完成的基本登录。 */
+/** 大厅及受邀进入时单独校验；失败不得撤销已完成的基本登录。 */
 export async function readKookContext(
   config: Config['kook'],
   accessToken: string,
@@ -254,7 +254,7 @@ export async function readKookContext(
   record?: CallRecorder
 ) {
   const secrets = [config.clientSecret, accessToken]
-  check(config.contextUrl && config.gameCode, 'PLATFORM_NOT_CONFIGURED', '邀请上下文接口尚未配置', 503)
+  check(config.contextUrl && config.gameCode, 'PLATFORM_NOT_CONFIGURED', '游戏上下文接口尚未配置', 503)
   // instanceId只是查询选择器；身份和游玩资格由KOOK按同一OAuth token复核。
   check(/^[A-Za-z0-9_-]{1,256}$/.test(instanceId), 'PLATFORM_CONTEXT_INVALID', '小游戏实例参数无效', 400)
   const url = new URL(endpoint(config.contextUrl))
@@ -304,6 +304,7 @@ export async function readKookContext(
   }
   return {
     instanceId: parsed.data.instance.instance_id,
+    context: { type: parsed.data.instance.context_type, id: parsed.data.instance.context_id },
     invitedRoomId:
       parsed.data.invite.status === 'joined_by_invite' && parsed.data.room.room_source === 'invite'
         ? parsed.data.room.room_id

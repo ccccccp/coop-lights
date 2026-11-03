@@ -100,7 +100,7 @@ test('OAuth creates a browser-bound one-use transaction and a server-verified ga
   expect((await f.http('/api/session', result.cookie)).status).toBe(200)
   expect((await f.http('/api/kook/login/complete', transaction.cookie, payload)).status).toBe(401)
   expect(f.oauth.exchanges()).toBe(1)
-  expect((await f.http('/api/rooms', result.cookie, {})).data.room.platformInstanceId).toBeNull()
+  expect((await f.http('/api/rooms', result.cookie, {})).data.room.platformInstanceId).toBe('fixture-instance')
 })
 
 test('OAuth rejects foreign origin, spoofed identity and instance data without exchanging code', async () => {
@@ -358,7 +358,35 @@ test('普通登录不调用context，实例接口异常也保留用户身份和�
   expect(result.data.user.nickname).toBe('模拟玩家阿青')
   expect(result.data.platform.invitedRoomId).toBeNull()
   expect(f.oauth.contextCalls()).toBe(0)
-  expect((await f.http('/api/rooms', result.cookie, {})).status).toBe(200)
+  expect((await f.http('/api/rooms', result.cookie, {})).status).toBe(502)
+  expect((await f.http('/api/session', result.cookie)).status).toBe(200)
+})
+
+test('大厅按服务端context准入，伪造上下文或裸roomId不能跨频道，可信邀请可直接入房', async () => {
+  const f = await fixture()
+  async function login(player: 'alice' | 'bob', context: { type: 1 | 2; id: string }, roomId: string | null = null) {
+    const tx = await f.start()
+    return f.http('/api/kook/login/complete', tx.cookie, {
+      state: tx.data.state,
+      code: f.oauth.issue(player, roomId, 'fixture-instance', context),
+    })
+  }
+  const a = await login('alice', { type: 1, id: 'text-channel' })
+  const b = await login('bob', { type: 2, id: 'voice-channel' })
+  const created = await f.http('/api/rooms', a.cookie, { context: { type: 2, id: 'forged' } })
+  expect(created.status).toBe(200)
+  expect(created.data.room.context).toEqual({ type: 1, id: 'text-channel' })
+  const id = created.data.room.id
+  const lobby = await f.http('/api/lobby', b.cookie)
+  expect(lobby.data.context).toEqual({ type: 2, id: 'voice-channel' })
+  expect(lobby.data.rooms[0]).toMatchObject({ id, isCurrentContext: false, canJoin: false })
+  expect(lobby.data.canCreate).toBe(true)
+  expect((await f.http(`/api/rooms/${id}/join`, b.cookie, { context: { type: 1, id: 'text-channel' } })).status).toBe(
+    403
+  )
+  expect((await f.http('/api/rooms', a.cookie, {})).data.code).toBe('ALREADY_IN_ROOM')
+  const invited = await login('bob', { type: 2, id: 'voice-channel' }, id)
+  expect((await f.http(`/api/rooms/${id}/join`, invited.cookie, {})).data.room.players).toHaveLength(2)
 })
 
 test('邀请核验单独读取room_id，失败保留原登录，成功返回可信房间', async () => {
@@ -375,7 +403,11 @@ test('邀请核验单独读取room_id，失败保留原登录，成功返回可�
   f.oauth.setContextResponse(undefined)
   const resolved = await f.http('/api/kook/invite/resolve', login.cookie, { instanceId: 'fixture-instance' })
   expect(resolved.status).toBe(200)
-  expect(resolved.data).toEqual({ instanceId: 'fixture-instance', invitedRoomId: 'ABC234' })
+  expect(resolved.data).toEqual({
+    instanceId: 'fixture-instance',
+    context: { type: 4, id: 'fixture-chat' },
+    invitedRoomId: 'ABC234',
+  })
   expect(JSON.stringify(resolved.data)).not.toMatch(/accessToken|access_token|client_secret/)
 })
 

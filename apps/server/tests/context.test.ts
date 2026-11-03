@@ -35,7 +35,7 @@ test('同一OAuth token在后端查询真实context，room_id和实例核验成�
   const result = await exchangeKookCode(config, 'code-once').then((grant) =>
     readKookContext(config, grant.accessToken, 'instance')
   )
-  expect(result).toEqual({ instanceId: 'instance', invitedRoomId: 'ABC234' })
+  expect(result).toEqual({ instanceId: 'instance', context: { type: 4, id: 'private-chat' }, invitedRoomId: 'ABC234' })
   const url = new URL(String(fetcher.mock.calls[2][0]))
   expect(url.pathname).toBe('/api/v3/mini-game/context')
   expect(Object.fromEntries(url.searchParams)).toEqual({ game_code: config.gameCode, instance_id: 'instance' })
@@ -52,7 +52,7 @@ test('普通进入的instance回退房间保持主页，不按点灯六位房间
   const result = await exchangeKookCode(config, 'code-once').then((grant) =>
     readKookContext(config, grant.accessToken, 'instance')
   )
-  expect(result).toEqual({ instanceId: 'instance', invitedRoomId: null })
+  expect(result).toEqual({ instanceId: 'instance', context: { type: 4, id: 'private-chat' }, invitedRoomId: null })
 })
 
 test.each([

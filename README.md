@@ -4,7 +4,7 @@ React + TypeScript + Node.js 的 1～4 人协作点灯游戏，使用 PostgreSQL
 
 本独立项目同步维护旁边 `../kook-minigame-sdk/examples/coop-lights` 的游戏实现，SDK 运行库使用 npmjs 已发布包。
 
-SDK 固定使用 npmjs 已发布的 `0.1.0-alpha.2`，采用 `createKookClient` 具名导入。
+SDK 固定使用 npmjs 已发布的 `0.1.3`，采用 `createKookClient` 具名导入。
 
 已接入 KOOK 小游戏 SDK，支持登录授权、邀请、平台数据调试、连接恢复与授权撤销。当前可用本地模拟宿主完成自测；真实 KOOK 环境需要补齐应用配置并联调。配置和接入边界见 [SDK 接入说明](docs/sdk-integration.md)。
 
@@ -57,8 +57,8 @@ pnpm dev:sdk
 
 首次手动访问时，需要分别访问 <https://localhost:5190/> 和 <https://127.0.0.1:5190/> 接受本地自签证书，再回到宿主页。证书只存放在 `.sdk-test/`，脚本不更改系统证书信任。
 
-1. 宿主页选择「玩家阿青」，在游戏里点击「使用 KOOK 登录」，创建房间。
-2. 用另一浏览器或无痕窗口打开 `https://localhost:5190/?player=bob&room=房间号`，点击登录和加入。
+1. 宿主页选择「玩家阿青」，自动授权后在大厅创建房间。
+2. 用另一浏览器或无痕窗口打开 `https://localhost:5190/?player=bob`，大厅实时显示同一频道的房间，点击「加入房间」。`&room=房间号` 可模拟邀请直达；`&text&channel=频道标识` 可模拟文字频道，默认是语音频道；改变 `channel` 可检查其他上下文只读展示。
 3. 双方准备，由房主开始点灯；每次点击翻转本格及上下左右相邻格，全部点亮即通关。
 4. 宿主工具栏可模拟取消授权、撤销授权、断线恢复、参与者变化和实例关闭。
 5. 游戏里的「开发与平台调试面板」可追加权限，读取好友、频道成员、参与者和官方服务器信息。
@@ -75,7 +75,7 @@ SDK 运行库由本项目的 npm 依赖版本和锁文件确定；更新依赖�
 pnpm dev
 ```
 
-打开 <http://localhost:5178/>。输入昵称后即可创建或加入房间，邀请按钮复制游戏链接。后端默认 <http://127.0.0.1:5188/api/health>。
+打开 <http://localhost:5178/>。输入昵称后显示房间大厅，点击列表加入房间或创建房间，邀请按钮复制直达链接。普通刷新先显示大厅，已加入房间可点击「返回房间」继续游玩。后端默认 <http://127.0.0.1:5188/api/health>。
 
 同一浏览器的普通标签页共享会话，新连接会接替旧连接；双人测试请使用独立浏览器上下文。异常断线保留席位 60 秒，主动退出立即释放。游戏房间保存在服务端内存，服务重启后房间消失，已保存记录仍在 PostgreSQL。
 
@@ -98,15 +98,25 @@ pnpm test:sdk
 
 `docs/platform-contract.md`、`docs/development-status.md`、`docs/test-scenarios.md` 和 `DEVELOPMENT_PLAN.md` 保留 2026-10-12 之前的归档快照；本次 SDK 接入以本 README 和 [SDK 接入说明](docs/sdk-integration.md) 为准。
 
+## 房间大厅与上下文准入
+
+普通打开（包括活动卡片及频道入口）登录后显示大厅，分为当前上下文房间和其他上下文房间，移除手动输入房间号／密码的入口。已有席位保留，可从大厅返回继续游玩。只有携带游戏房间目标的邀请启动才自动入房；独立模式支持 `?roomId=房间号`，兼容旧 `?room=` 邀请链接。
+
+KOOK 登录默认申请宿主可用的 `get_user_info` 和 `mini_game.context`，基本登录完成后单独调用 `POST /api/kook/context/refresh`。游戏后端使用 OAuth token 核验平台 context，将 `data.instance.context_type/context_id` 作为房间归属；平台实例仍独立记录，不作为游戏房间号。同一上下文只要有房间有空位就必须优先加入；仅在没有房间或所有房间满员时允许新建，创建与占位在服务端同步检查。断线宽限期内的席位计入人数。
+
+`GET /api/lobby` 返回房间摘要、当前上下文、加入权限和建房权限。其他上下文仅显示房主、成员头像／昵称、在线／准备状态、人数及对局状态，不提供棋盘、种子或加入能力；直接调用入房 API 同样会被服务端拒绝。经过 KOOK 核验的定向邀请可跨上下文直达指定房间。
+
+WebSocket 登录后立即下发 `lobby.snapshot`，建房、入房、离房、房主转移、资料更新、准备、开局、通关、断线及超时清理都会更新摘要；纯棋盘变化不重复推送大厅。重连重新下发完整列表；前端按大厅版本丢弃迟到快照，新连接重置版本以兼容服务端重启。上下文查询失败保留基本登录、禁用建房与加入，用户可点击「刷新大厅」重试。
+
 ## KOOK 实例邀请
 
 房间内点击“邀请好友”会调用 npm SDK 的 `ui.openInviteModal({ roomId })`，由 KOOK 的原生邀请弹框选人发送，游戏只显示成功／失败人数。宿主需支持 `ui.openInviteModal`；没有该能力时按钮禁用。
 
-普通打开只进行 OAuth 换码和用户资料读取，不请求 context，也不要求 mini_game.context 权限作为基本登录前置。登录结果成功后立即保留用户身份和主页。
+基本登录只进行 OAuth 换码和用户资料读取；随后独立查询 context 供大厅准入使用，失败不撤销用户身份。
 
-受邀启动（SDK launchSource=invite）登录成功后，另行调用游戏后端 POST /api/kook/invite/resolve。后端使用仅驻留内存的 OAuth token 查询 KOOK /api/v3/mini-game/context，按 data.instance 核对游戏／实例和 data.invite.status，并读取 data.room。只有 invite.status=joined_by_invite 且 room.room_source=invite 时，才按 room.room_id 自动加入点灯房间；room_source=instance 时 room_id 是平台实例回退值，不用于游戏入房。实例／频道／私信编号和旧平铺房间字段均不替代正式游戏房间号。查询失败提示原因并保留登录与主页；房间满员或已结束时同样回主页。主动离房不会重复自动入房。
+受邀启动（SDK launchSource=invite，可携带 roomId）登录成功后，另行调用游戏后端 POST /api/kook/invite/resolve。后端使用仅驻留内存的 OAuth token 查询 KOOK /api/v3/mini-game/context，按 data.instance 核对游戏／实例和 data.invite.status，并读取 data.room。只有 invite.status=joined_by_invite 且 room.room_source=invite 时，才按 room.room_id 自动加入点灯房间；room_source=instance 时 room_id 是平台实例回退值，不用于游戏入房。实例／频道／私信编号和旧平铺房间字段均不替代正式游戏房间号。查询失败提示原因并保留登录与大厅；房间满员或已结束时同样回大厅。主动离房不会重复自动入房。
 
-KOOK 后端须部署 POST /api/v3/mini-game/invite-send 和 context 接口，邀请核验需要 mini_game.context 授权；上下文格式错误只影响接受邀请。普通房间继续使用游戏身份和六位房间号，平台实例 ID 不再是基本登录或游玩的必经校验；服务器内存中保存核验成功的邀请目标，不以浏览器 roomId 自报作为邀请依据。重启后接受邀请可能需要重新授权，已有基本登录不受影响。
+KOOK 后端须部署 POST /api/v3/mini-game/invite-send 和 context 接口，大厅与邀请核验需要 mini_game.context 授权。服务器内存中保存核验成功的上下文和邀请目标，不以浏览器 roomId 自报作为跨上下文邀请依据。重启后可能需要重新授权，已有基本登录不受影响。
 
 ## 接口调用日志
 

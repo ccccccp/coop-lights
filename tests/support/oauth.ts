@@ -5,9 +5,10 @@ export async function createMockOAuth() {
   const accounts = {
     alice: { id: 'fixture-alice', username: '模拟玩家阿青', avatar: 'https://avatars.test/alice.svg' },
     bob: { id: 'fixture-bob', username: '模拟玩家小林', avatar: 'https://avatars.test/bob.svg' },
+    carol: { id: 'fixture-carol', username: '模拟玩家小月', avatar: 'https://avatars.test/carol.svg' },
   }
   type Account = (typeof accounts)[keyof typeof accounts]
-  type Launch = { instanceId: string; roomId: string | null }
+  type Launch = { instanceId: string; roomId: string | null; context: { type: 1 | 2 | 3 | 4; id: string } }
   const codes = new Map<string, { profile: Account; expiresAt: number } & Launch>()
   const tokens = new Map<string, { profile: Account } & Launch>()
   const secret = randomBytes(32).toString('hex')
@@ -68,8 +69,8 @@ export async function createMockOAuth() {
               instance: {
                 instance_id: launch.instanceId,
                 state: 'active',
-                context_type: 4,
-                context_id: 'fixture-chat',
+                context_type: launch.context.type,
+                context_id: launch.context.id,
               },
               room: launch.roomId
                 ? { room_id: launch.roomId, room_source: 'invite' }
@@ -100,11 +101,16 @@ export async function createMockOAuth() {
       gameCode: 'lights-sdk-fixture',
       contextUrl: `http://127.0.0.1:${port}/api/v3/mini-game/context`,
     },
-    issue(player: string, roomId: string | null = null, instanceId = 'fixture-instance') {
-      if (player !== 'alice' && player !== 'bob') throw new Error('Unknown fixture player')
+    issue(
+      player: string,
+      roomId: string | null = null,
+      instanceId = 'fixture-instance',
+      context: Launch['context'] = { type: 4, id: 'fixture-chat' }
+    ) {
+      if (player !== 'alice' && player !== 'bob' && player !== 'carol') throw new Error('Unknown fixture player')
       for (const [key, value] of codes) if (value.expiresAt <= Date.now()) codes.delete(key)
       const code = randomBytes(24).toString('hex')
-      codes.set(code, { profile: accounts[player], expiresAt: Date.now() + 60000, instanceId, roomId })
+      codes.set(code, { profile: accounts[player], expiresAt: Date.now() + 60000, instanceId, roomId, context })
       return code
     },
     exchanges: () => exchanges,
