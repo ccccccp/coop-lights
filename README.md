@@ -110,7 +110,7 @@ WebSocket 登录后立即下发 `lobby.snapshot`，建房、入房、离房、�
 
 ## KOOK 实例邀请
 
-房间内点击“邀请好友”会调用 npm SDK 的 `ui.openInviteModal({ roomId })`，由 KOOK 的原生邀请弹框选人发送，游戏只显示成功／失败人数。宿主需支持 `ui.openInviteModal`；没有该能力时按钮禁用。
+房间内点击“邀请好友”按 SDK `ready().context.contextType` 分流：文字／语音频道调用 `ui.openInviteModal()`，宿主复用游戏区左下角的原生频道游戏邀请，支持发送好友、复制链接及修改有效期／次数，接收者打开频道大厅后选择房间；普通私信／游戏应用私信仍调用 `ui.openInviteModal({ roomId })`，接受后直接进入指定房间。游戏根据真实发送／复制结果提示，取消不提示成功。宿主需支持 `ui.openInviteModal` 及不带 roomId 的频道分流；频道无邀请权限时拒绝，不回退到私信。
 
 基本登录只进行 OAuth 换码和用户资料读取；随后独立查询 context 供大厅准入使用，失败不撤销用户身份。
 

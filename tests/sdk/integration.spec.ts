@@ -98,7 +98,7 @@ test('two SDK players exchange code, invite, cooperate and recover the scoped co
     await game(a).getByTestId('create-room').click()
     const id = await game(a).getByTestId('active-room-code').innerText()
     await game(a).getByRole('button', { name: '邀请好友', exact: true }).click()
-    await expect(a.locator('#host-status')).toContainText(id)
+    await expect(a.locator('#host-status')).toContainText('频道游戏邀请')
     await expect(game(a).getByRole('status')).toContainText('已发送给 1 位好友')
     await open(b, 'bob', id)
     await expect(game(b).getByTestId('active-room-code')).toHaveText(id)
@@ -172,6 +172,40 @@ test('two SDK players exchange code, invite, cooperate and recover the scoped co
     await bContext.close()
   }
 })
+
+for (const [query, channel] of [
+  ['text', true],
+  ['', true],
+  ['dm', false],
+  ['app-dm', false],
+] as const) {
+  test(`邀请好友按${query || 'voice'}上下文选择频道大厅邀请或固定房间邀请`, async ({ page }) => {
+    await page.route('https://avatars.test/**', (route) => route.abort())
+    await page.goto(`https://localhost:5190/?player=alice&${query}`)
+    await game(page).getByTestId('create-room').click()
+    const roomId = await game(page).getByTestId('active-room-code').innerText()
+    await game(page).getByRole('button', { name: '邀请好友', exact: true }).click()
+    const inputs = await page.evaluate(
+      () => (window as unknown as { sdkFixture: { inviteInputs: unknown[] } }).sdkFixture.inviteInputs
+    )
+    expect(inputs).toEqual([channel ? {} : { roomId }])
+    await expect(game(page).getByRole('status')).toContainText(channel ? '频道大厅选择房间' : '将进入当前房间')
+  })
+}
+
+for (const mode of ['copy-invite', 'cancel-invite', 'failed-invite']) {
+  test(`频道邀请${mode}不提示直接加入当前房间`, async ({ page }) => {
+    await page.goto(`https://localhost:5190/?player=alice&text&${mode}`)
+    await game(page).getByTestId('create-room').click()
+    await game(page).getByRole('button', { name: '邀请好友', exact: true }).click()
+    if (mode === 'cancel-invite') await expect(game(page).getByRole('status')).toHaveCount(0)
+    else
+      await expect(game(page).getByRole('status')).toContainText(
+        mode === 'copy-invite' ? '频道游戏邀请链接已复制' : '发送失败'
+      )
+    await expect(game(page).getByText('接受后将进入当前房间', { exact: false })).toHaveCount(0)
+  })
+}
 
 test('排行榜加载失败可重试，空榜提示、头像回退和关闭后重新打开均正常', async ({ page }) => {
   let calls = 0

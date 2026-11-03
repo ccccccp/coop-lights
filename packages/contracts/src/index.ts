@@ -109,6 +109,7 @@ export interface PlatformContext {
   epoch: number
   invitedRoomId: string | null
   launchSource?: string
+  launchContextType?: 'text_channel' | 'voice_channel' | 'user_dm' | 'mini_game_dm'
   participantsRevision: number | null
   message: string
 }
@@ -142,9 +143,13 @@ export interface PlatformAdapter {
   logout(): Promise<void>
   resolveInvite?(): Promise<void>
   refreshContext?(): Promise<void>
-  invite(
-    roomId: string
-  ): Promise<{ status: 'submitted' | 'cancelled'; sentCount?: number; failedCount?: number; url?: string }>
+  invite(roomId: string): Promise<{
+    status: 'submitted' | 'cancelled'
+    sentCount?: number
+    failedCount?: number
+    url?: string
+    target?: 'channel'
+  }>
   subscribe(listener: (event: PlatformEvent) => void): () => void
   reportLoaded(): Promise<void>
   inspect?(resource: PlatformResource, cursor?: string): Promise<PlatformInspection>

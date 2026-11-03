@@ -8,7 +8,10 @@ const params = new URLSearchParams(location.search)
 const player = ['bob', 'carol'].includes(params.get('player') ?? '') ? params.get('player')! : 'alice'
 const roomId = params.get('room') || undefined
 const instanceId = params.get('instance') || 'fixture-instance'
-const roomContext = { type: params.has('text') ? 1 : 2, id: params.get('channel') || 'fixture-channel' }
+const roomContext = {
+  type: params.has('app-dm') ? 4 : params.has('dm') ? 3 : params.has('text') ? 1 : 2,
+  id: params.get('channel') || 'fixture-channel',
+}
 const supported = [
   'social.getFriendsAndDms',
   'channel.getMembers',
@@ -32,6 +35,7 @@ let bootstrapEnabled = !params.has('defer-bootstrap')
 let bootstrapRequests = 0
 let probes = 0
 const calls: string[] = []
+const inviteInputs: Record<string, unknown>[] = []
 const authObservers = new Set<(value: unknown) => void>()
 const lifecycleObservers = new Set<(value: unknown) => void>()
 const participantObservers = new Set<(value: unknown) => void>()
@@ -68,7 +72,9 @@ function register() {
         permissionVersion: 'fixture-v1',
         availableScopes: params.has('core') ? [] : params.has('basic-only') ? ['get_user_info'] : scopes,
         context: {
-          contextType: roomContext.type === 1 ? 'text_channel' : 'voice_channel',
+          contextType: ({ 1: 'text_channel', 2: 'voice_channel', 3: 'user_dm', 4: 'mini_game_dm' } as const)[
+            roomContext.type as 1 | 2 | 3 | 4
+          ],
           launchSource: roomId || params.has('spoof-room') ? 'invite' : 'appLauncher',
           ...(params.has('spoof-room') ? { roomId: params.get('spoof-room')! } : roomId ? { roomId } : {}),
         },
@@ -131,13 +137,19 @@ function register() {
         nextCursor: null,
       }),
     'ui.openInviteModal': (input) => {
-      document.querySelector('#host-status')!.textContent = `模拟邀请已提交，游戏房间 ${String(input.roomId)}`
+      inviteInputs.push(input)
+      document.querySelector('#host-status')!.textContent =
+        input.roomId === undefined && (roomContext.type === 1 || roomContext.type === 2)
+          ? `模拟频道游戏邀请已提交，当前频道 ${roomContext.id}`
+          : `模拟邀请已提交，游戏房间 ${String(input.roomId)}`
       return success(
         params.has('cancel-invite')
           ? { status: 'cancelled', sentCount: 0, failedCount: 0 }
-          : params.has('failed-invite')
-            ? { status: 'submitted', sentCount: 0, failedCount: 1 }
-            : { status: 'submitted', sentCount: 1, failedCount: 0 }
+          : params.has('copy-invite')
+            ? { status: 'submitted', sentCount: 0, failedCount: 0 }
+            : params.has('failed-invite')
+              ? { status: 'submitted', sentCount: 0, failedCount: 1 }
+              : { status: 'submitted', sentCount: 1, failedCount: 0 }
       )
     },
     'officialServer.getStatus': () =>
@@ -232,6 +244,7 @@ document.querySelector('#participants')!.addEventListener('click', () => {
 Object.assign(window, {
   sdkFixture: {
     calls,
+    inviteInputs,
     loaded: () => loaded,
     bootstrapRequests: () => bootstrapRequests,
     probes: () => probes,

@@ -497,9 +497,13 @@ export function App() {
                         setNotice(
                           result.url
                             ? '邀请链接已复制，发给朋友即可加入'
-                            : result.failedCount
-                              ? `已发送给 ${result.sentCount ?? 0} 位好友，${result.failedCount} 次发送失败`
-                              : `已发送给 ${result.sentCount ?? 0} 位好友，接受后将进入当前房间`
+                            : result.target === 'channel' && !result.sentCount && !result.failedCount
+                              ? '频道游戏邀请链接已复制，好友可进入频道并在大厅选择房间'
+                              : result.failedCount
+                                ? `已发送给 ${result.sentCount ?? 0} 位好友，${result.failedCount} 次发送失败`
+                                : result.target === 'channel'
+                                  ? `已发送给 ${result.sentCount ?? 0} 位好友，接受后可在频道大厅选择房间`
+                                  : `已发送给 ${result.sentCount ?? 0} 位好友，接受后将进入当前房间`
                         )
                     })
                   }

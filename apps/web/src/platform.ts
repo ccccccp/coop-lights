@@ -152,6 +152,7 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
       patch({
         instanceId: ready.instanceId,
         launchSource: ready.context.launchSource,
+        launchContextType: ready.context.contextType,
         capabilities: [...ready.capabilities],
         availableScopes: [...ready.availableScopes],
         authorizedScopes: scopes.filter((scope) => sdk.hasScope(scope)),
@@ -319,6 +320,11 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
     async invite(roomId) {
       const sdk = currentClient()
       if (!sdk.hasCapability('ui.openInviteModal')) throw new Error('当前 KOOK 宿主未开放邀请能力')
+      // 频道邀请打开当前频道的游戏大厅，具体房间由同频道玩家在大厅选择。
+      if (context.launchContextType === 'text_channel' || context.launchContextType === 'voice_channel') {
+        const result = await sdk.ui.openInviteModal()
+        return { ...result, target: 'channel' }
+      }
       return sdk.ui.openInviteModal({ roomId })
     },
     subscribe(listener) {

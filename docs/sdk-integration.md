@@ -68,18 +68,18 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 
 ## 已接入的 SDK 能力
 
-| 能力                                | 游戏行为                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------------------ |
-| `ready()` / `onConnectionChanged()` | 读取能力和启动上下文；恢复期间暂停游戏连接，恢复后重新读取上下文                           |
-| `session.get()`                     | SDK 就绪后请求 `get_user_info` 和可用的 `mini_game.context`；取消后支持手动重试            |
-| `lifecycle.reportLoadResult()`      | 欢迎页可用后上报加载成功，每个适配器只成功上报一次                                         |
-| `auth.onStateChanged()`             | 同步权限；撤销后退出游戏会话                                                               |
-| `lifecycle.onStateChanged()`        | 实例关闭后清除会话并停用操作                                                               |
-| `instance.onParticipantsChanged()`  | 显示参与者快照版本                                                                         |
-| `ui.openInviteModal()`              | 携带游戏房间号打开邀请；登录后按后端 context 确认的 room_id 自动加入，满员或结束时显示主页 |
-| 好友、频道成员、参与者查询          | 按能力与权限启用按钮，支持 cursor 分页                                                     |
-| 官方服务器查询及弹窗                | 展示 SDK 返回结果，正常处理取消                                                            |
-| `destroy()` / 取消订阅              | 页面卸载、重试时清理旧适配器与连接                                                         |
+| 能力                                | 游戏行为                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `ready()` / `onConnectionChanged()` | 读取能力和启动上下文；恢复期间暂停游戏连接，恢复后重新读取上下文                                        |
+| `session.get()`                     | SDK 就绪后请求 `get_user_info` 和可用的 `mini_game.context`；取消后支持手动重试                         |
+| `lifecycle.reportLoadResult()`      | 欢迎页可用后上报加载成功，每个适配器只成功上报一次                                                      |
+| `auth.onStateChanged()`             | 同步权限；撤销后退出游戏会话                                                                            |
+| `lifecycle.onStateChanged()`        | 实例关闭后清除会话并停用操作                                                                            |
+| `instance.onParticipantsChanged()`  | 显示参与者快照版本                                                                                      |
+| `ui.openInviteModal()`              | 文字／语音频道不传 roomId，复用原生频道游戏邀请并打开频道大厅；私信携带 roomId，按可信 context 自动入房 |
+| 好友、频道成员、参与者查询          | 按能力与权限启用按钮，支持 cursor 分页                                                                  |
+| 官方服务器查询及弹窗                | 展示 SDK 返回结果，正常处理取消                                                                         |
+| `destroy()` / 取消订阅              | 页面卸载、重试时清理旧适配器与连接                                                                      |
 
 广告 SDK 能力尚未提供，因此不显示虚构成功结果。平台窗口的完整交互仍由实际宿主负责。
 
