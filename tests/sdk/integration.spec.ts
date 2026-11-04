@@ -2,7 +2,9 @@ import { type Page, expect, request, test } from '@playwright/test'
 
 import { solve } from '../../apps/server/src/board'
 
-type FixtureWindow = Window & { sdkFixture: { loaded(): number; calls: string[] } }
+type FixtureWindow = Window & {
+  sdkFixture: { loaded(): number; calls: string[]; leaveInputs: Record<string, unknown>[] }
+}
 
 test.beforeEach(async ({ request }) => {
   await request.post('/mock/reset')
@@ -626,4 +628,80 @@ test('KOOK已确认受邀但未返回room_id时保留登录、提示缺房间，
   await expect(game(page).getByRole('status')).toContainText('KOOK邀请未返回点灯房间号')
   await expect(game(page).getByTestId('create-room')).toBeEnabled()
   expect(joins).toBe(0)
+})
+
+test('右上角离开游戏无需 OAuth，窄屏仍可操作且重复点击只提交一次', async ({ page }, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto('https://localhost:5190/?core')
+  await expect(game(page).getByTestId('kook-login')).toBeDisabled()
+  const leave = game(page).getByRole('button', { name: '离开游戏', exact: true })
+  await expect(leave).toBeEnabled()
+  await game(page)
+    .locator('.topbar')
+    .screenshot({ path: testInfo.outputPath('leave-button-desktop.png') })
+  await page.setViewportSize({ width: 430, height: 900 })
+  await expect(leave).toBeInViewport()
+  await game(page)
+    .locator('.topbar')
+    .screenshot({ path: testInfo.outputPath('leave-button-narrow.png') })
+  await leave.evaluate((button) => {
+    const element = button as HTMLButtonElement
+    element.click()
+    element.click()
+  })
+  await expect(page.locator('#host-status')).toHaveText('小游戏已离开')
+  await expect(leave).toBeDisabled()
+  const fixture = await page.evaluate(() => ({
+    calls: (window as FixtureWindow).sdkFixture.calls,
+    inputs: (window as FixtureWindow).sdkFixture.leaveInputs,
+  }))
+  expect(fixture.calls.filter((method) => method === 'lifecycle.leave')).toHaveLength(1)
+  expect(fixture.calls).not.toContain('session.get')
+  expect(fixture.inputs).toEqual([{}])
+  expect(errors).toEqual([])
+})
+
+test('先退出点灯房间再调用 SDK leave，退房或平台退出失败均可重试', async ({ page }) => {
+  await page.goto('https://localhost:5190/?fail-leave-once')
+  await game(page).getByTestId('create-room').click()
+  await expect(game(page).getByTestId('active-room-code')).toBeVisible()
+  const leave = game(page).getByRole('button', { name: '离开游戏', exact: true })
+  let roomLeaves = 0
+  await page.route('**/api/rooms/*/leave', (route) => {
+    roomLeaves++
+    return roomLeaves === 1
+      ? route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ code: 'UNAVAILABLE', message: '退房暂时失败，请重试' }),
+        })
+      : route.continue()
+  })
+  await leave.click()
+  await expect(game(page).getByRole('status')).toContainText('退房暂时失败')
+  await expect(game(page).getByTestId('active-room-code')).toBeVisible()
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.leaveInputs)).toEqual([])
+  await expect(leave).toBeEnabled()
+  await leave.click()
+  await expect(game(page).getByRole('status')).toContainText('SERVICE_UNAVAILABLE')
+  await expect(leave).toBeEnabled()
+  await expect(game(page).getByTestId('current-user-name')).toBeVisible()
+  const frame = page.frames().find((value) => value.name() === 'game')!
+  const session = await frame.evaluate(async () => (await fetch('/api/session')).json())
+  expect(session.room).toBeNull()
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.leaveInputs)).toEqual([{}])
+  await leave.click()
+  await expect(page.locator('#host-status')).toHaveText('小游戏已离开')
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.leaveInputs)).toEqual([{}, {}])
+  expect(roomLeaves).toBe(2)
+})
+
+test('旧宿主未声明 leave 能力时禁用离开游戏按钮', async ({ page }) => {
+  await page.goto('https://localhost:5190/?core&no-leave')
+  await expect(game(page).getByText('当前 KOOK 宿主尚未开放账号授权，请等待平台开放后登录。')).toBeVisible()
+  const leave = game(page).getByRole('button', { name: '离开游戏', exact: true })
+  await expect(leave).toBeDisabled()
+  await expect(leave).toHaveAttribute('title', '当前 KOOK 暂不支持离开游戏')
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.leaveInputs)).toEqual([])
 })

@@ -20,6 +20,7 @@ const supported = [
   'officialServer.getStatus',
   'ui.openOfficialServerModal',
   'lifecycle.reportLoadResult',
+  'lifecycle.leave',
   'auth.onStateChanged',
   'lifecycle.onStateChanged',
   'instance.onParticipantsChanged',
@@ -36,6 +37,7 @@ let bootstrapRequests = 0
 let probes = 0
 const calls: string[] = []
 const inviteInputs: Record<string, unknown>[] = []
+const leaveInputs: Record<string, unknown>[] = []
 const authObservers = new Set<(value: unknown) => void>()
 const lifecycleObservers = new Set<(value: unknown) => void>()
 const participantObservers = new Set<(value: unknown) => void>()
@@ -68,7 +70,7 @@ function register() {
         gameCode: 'lights-sdk-fixture',
         instanceId,
         platform: 'web',
-        capabilities: supported,
+        capabilities: params.has('no-leave') ? supported.filter((value) => value !== 'lifecycle.leave') : supported,
         permissionVersion: 'fixture-v1',
         availableScopes: params.has('core') ? [] : params.has('basic-only') ? ['get_user_info'] : scopes,
         context: {
@@ -159,6 +161,19 @@ function register() {
       loaded++
       return success({})
     },
+    'lifecycle.leave': (input) => {
+      leaveInputs.push(input)
+      if (params.has('fail-leave-once') && leaveInputs.length === 1) {
+        return { ok: false, error: { code: 'SERVICE_UNAVAILABLE' } }
+      }
+      // 模拟宿主先回包，再结束当前游戏承载。
+      setTimeout(() => {
+        lifecycle = { ...lifecycle, revision: lifecycle.revision + 1, status: 'closed' }
+        for (const notify of lifecycleObservers) notify(success({ ...lifecycle, reason: 'user_exit' }))
+        document.querySelector('#host-status')!.textContent = '小游戏已离开'
+      }, 50)
+      return success({})
+    },
     'lifecycle.resume': () =>
       success({
         status: 'resumed',
@@ -245,6 +260,7 @@ Object.assign(window, {
   sdkFixture: {
     calls,
     inviteInputs,
+    leaveInputs,
     loaded: () => loaded,
     bootstrapRequests: () => bootstrapRequests,
     probes: () => probes,

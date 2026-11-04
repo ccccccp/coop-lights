@@ -1,10 +1,10 @@
 # SDK 接入说明
 
-更新：2026-11-04，对应 SDK 1.1.0。已实现上下文房间大厅，规则及本地验证见 [README](../README.md#房间大厅与上下文准入)。真实 KOOK 后端与双账号验收仍需在平台环境执行。
+更新：2026-11-04，对应 SDK 1.2.0。已实现上下文房间大厅，规则及本地验证见 [README](../README.md#房间大厅与上下文准入)。真实 KOOK 后端与双账号验收仍需在平台环境执行。
 
 ## 前端启动与登录
 
-`apps/web/src/platform.ts` 使用 npm 已发布版本 `1.1.0` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式直接创建客户端并调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
+`apps/web/src/platform.ts` 使用 npm 已发布版本 `1.2.0` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式直接创建客户端并调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
 
 正式 KOOK 环境的最小调用为：
 
@@ -28,6 +28,12 @@ VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:300
 无需再注入 `window.startCoopLights()`。宿主尚未开放 `profile.basic` 时，欢迎页仍能完成加载和续期，登录按钮禁用并说明原因；这不建立游戏账号，也不替代 OAuth。联机游玩仍需真实授权服务。宿主关闭游戏后 SDK 停止探测，页面卸载时销毁适配器与订阅；退出是否成功由宿主的 leave 接口决定。
 
 新页面不会仅凭已有游戏 cookie 自动恢复 KOOK 身份。完成本次 OAuth 授权码交换后，后端可恢复相同账号仍在宽限期内的游戏房间。
+
+## 主动离开游戏
+
+KOOK 模式页面右上角的“离开游戏”通过适配器调用 `client.lifecycle.leave()`。按钮只要求 SDK ready 和 `lifecycle.leave` capability，不要求 OAuth 或游戏账号；旧宿主未开放该能力时禁用。
+
+玩家仍在点灯房间时，先等待游戏后端退房成功，再请求宿主退出。退房失败不调用 SDK；平台退出失败保留游戏会话并显示错误，允许重试；操作期间禁用按钮，防止重复提交。平台成功后由宿主关闭游戏承载，页面不自行关闭窗口，也不以 `destroy()` 代替平台退出。独立联机模式保留原有退房／注销流程。
 
 ## 服务端配置
 

@@ -27,6 +27,7 @@ function prettyTime(ms: number) {
 export function App() {
   const [showLogs, setShowLogs] = useState(false)
   const [showLeaderboard, setShowLeaderboard] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   const [booted, setBooted] = useState(false),
     [user, setUser] = useState<GameUser | null>(null)
   const [room, setRoom] = useState<RoomSnapshot | null>(null),
@@ -214,6 +215,25 @@ export function App() {
   }
   const kook = health?.platform.mode === 'kook'
   const loginAvailable = !!health?.oauthConfigured && !!platform?.availableScopes.includes('get_user_info')
+  const leaveAvailable = !!platform?.capabilities.includes('lifecycle.leave')
+  function leaveGame() {
+    return action(async () => {
+      const current = adapter.current
+      if (!current?.leave || !leaveAvailable) throw new Error('当前 KOOK 暂不支持离开游戏')
+      setLeaving(true)
+      try {
+        // 宿主退出成功后可能立即卸载页面，先完成点灯自己的退房。
+        if (room) {
+          await api.leave(room.id)
+          setRoom(null)
+          setShowLobby(true)
+        }
+        await current.leave()
+      } finally {
+        setLeaving(false)
+      }
+    })
+  }
   useEffect(() => {
     if (!user || !connected || (kook && !platform?.context)) return
     let alive = true
@@ -343,6 +363,18 @@ export function App() {
                 退出登录
               </button>
             </>
+          )}
+          {kook && (
+            <button
+              type="button"
+              className="secondary small"
+              disabled={busy || platform?.status !== 'ready' || !leaveAvailable}
+              aria-busy={leaving}
+              title={!leaveAvailable ? '当前 KOOK 暂不支持离开游戏' : undefined}
+              onClick={() => void leaveGame()}
+            >
+              {leaving ? '正在离开…' : '离开游戏'}
+            </button>
           )}
         </div>
       </header>

@@ -141,6 +141,7 @@ export interface PlatformAdapter {
     scopes?: string[]
   ): Promise<{ status: 'logged_in'; session: SessionResponse } | { status: 'cancelled' }>
   logout(): Promise<void>
+  leave?(): Promise<void>
   resolveInvite?(): Promise<void>
   refreshContext?(): Promise<void>
   invite(roomId: string): Promise<{

@@ -312,6 +312,12 @@ export function kookAdapter(): PlatformAdapter {
       patch({ invitedRoomId: null, context: null })
       await clearGameSession()
     },
+    async leave() {
+      const sdk = currentClient()
+      if (context.status !== 'ready') throw new Error('请等待 KOOK 连接就绪')
+      if (!sdk.hasCapability('lifecycle.leave')) throw new Error('当前 KOOK 暂不支持离开游戏')
+      await sdk.lifecycle.leave()
+    },
     async invite(roomId) {
       const sdk = currentClient()
       if (!sdk.hasCapability('ui.openInviteModal')) throw new Error('当前 KOOK 宿主未开放邀请能力')
