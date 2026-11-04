@@ -1,29 +1,29 @@
 # SDK 接入说明
 
-更新：2026-11-03。已实现上下文房间大厅，规则及本地验证见 [README](../README.md#房间大厅与上下文准入)。真实 KOOK 后端与双账号验收仍需在平台环境执行。
+更新：2026-11-04，对应 SDK 1.1.0。已实现上下文房间大厅，规则及本地验证见 [README](../README.md#房间大厅与上下文准入)。真实 KOOK 后端与双账号验收仍需在平台环境执行。
 
 ## 前端启动与登录
 
-`apps/web/src/platform.ts` 使用 npm 已发布版本 `0.1.3` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式接收启动参数后调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
+`apps/web/src/platform.ts` 使用 npm 已发布版本 `1.1.0` 的具名导出 `createKookClient`。游戏根据 `/api/health` 返回的模式选择独立或 KOOK 适配器。KOOK 模式直接创建客户端并调用 `ready()`，欢迎页可用后报告加载完成；SDK 就绪且基本资料权限可用后自动发起一次登录授权，取消后由用户手动重试。
 
-在游戏根目录 `.env` 配置前端宿主白名单，然后重新构建游戏：
+正式 KOOK 环境的最小调用为：
+
+```ts
+import { createKookClient } from '@kookapp/kook-minigame-sdk'
+
+const client = createKookClient()
+const environment = await client.ready()
+```
+
+SDK 默认信任 `https://www.kookapp.cn`。测试环境在游戏根目录 `.env` 配置 `VITE_KOOK_HOST_ORIGINS`，游戏将其作为 `allowedHostOrigins` 传给 SDK，然后重新构建：
 
 ```dotenv
 VITE_KOOK_HOST_ORIGINS=https://tttt-www.dev.chuanyuapp.com,https://localhost:3000
 ```
 
-仅填写实际需要的 HTTPS origin，多个来源用逗号分隔；本地开发结束后移除 localhost。Vite 从游戏根目录加载该配置，不读取 URL 参数或 referrer 作为信任来源。
+仅填写实际需要的精确 HTTPS origin，多个来源用逗号分隔；该配置覆盖 SDK 默认来源，本地开发结束后移除 localhost。Vite 从游戏根目录加载该配置，不读取 URL 参数或 referrer 作为信任来源。
 
-游戏等待父窗口的消息：
-
-```ts
-{
-  type: 'KOOK_MINI_GAME_BOOTSTRAP',
-  bootstrap: { hostOrigin, sessionId, generation }
-}
-```
-
-同时校验父窗口、配置白名单以及 `bootstrap.hostOrigin === event.origin`。监听建立后向白名单宿主发送 `KOOK_MINI_GAME_BOOTSTRAP_REQUEST`，避免初始化晚于 iframe load 而漏掉参数。每页只接受一组绑定，成功、取消或超时后移除监听；重新打开游戏使用新的 iframe。
+启动消息接收、父窗口及来源校验、重投、超时和等待取消均由 SDK 内部处理。游戏不再维护 `bootstrap.ts`、`postMessage` 或启动绑定缓存。可信宿主发来错误启动参数时 SDK 终止初始化，需重新打开游戏；未收到启动参数时返回 `BOOTSTRAP_TIMEOUT`。
 
 无需再注入 `window.startCoopLights()`。宿主尚未开放 `profile.basic` 时，欢迎页仍能完成加载和续期，登录按钮禁用并说明原因；这不建立游戏账号，也不替代 OAuth。联机游玩仍需真实授权服务。宿主关闭游戏后 SDK 停止探测，页面卸载时销毁适配器与订阅；退出是否成功由宿主的 leave 接口决定。
 

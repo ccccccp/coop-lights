@@ -2,7 +2,6 @@ import { type KookClient, type KookSubscription, type Scope, createKookClient } 
 import type { PlatformAdapter, PlatformContext, PlatformEvent, PlatformResource } from '@lights/contracts'
 
 import { ApiError, api, setGameToken } from './api'
-import { waitForBootstrap } from './bootstrap'
 
 const scopes: Scope[] = ['get_user_info', 'mini_game.context']
 
@@ -55,12 +54,7 @@ export function standaloneAdapter(): PlatformAdapter {
   }
 }
 
-async function loadKookClient(signal: AbortSignal): Promise<KookClient> {
-  return createKookClient(await waitForBootstrap(signal))
-}
-
-export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> = loadKookClient): PlatformAdapter {
-  const abort = new AbortController()
+export function kookAdapter(): PlatformAdapter {
   const listeners = new Set<(event: PlatformEvent) => void>()
   const subscriptions: KookSubscription[] = []
   let context = initialContext('kook')
@@ -215,11 +209,12 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
     initialize() {
       if (initializedWork) return initializedWork
       initializedWork = (async () => {
-        client = await load(abort.signal)
-        if (disposed) {
-          client.destroy()
-          throw new Error('游戏初始化已取消')
-        }
+        if (disposed) throw new Error('游戏初始化已取消')
+        const allowedHostOrigins = (import.meta.env.VITE_KOOK_HOST_ORIGINS ?? '')
+          .split(',')
+          .map((value: string) => value.trim())
+          .filter(Boolean)
+        client = createKookClient(allowedHostOrigins.length ? { allowedHostOrigins } : undefined)
         offConnection = client.onConnectionChanged((value) => {
           if (disposed) return
           patch({ connectionState: value.state })
@@ -363,7 +358,6 @@ export function kookAdapter(load: (signal: AbortSignal) => Promise<KookClient> =
     dispose() {
       if (disposed) return
       disposed = true
-      abort.abort()
       loginVersion++
       offConnection?.()
       for (const subscription of subscriptions) void subscription.unsubscribe().catch(() => undefined)

@@ -82,8 +82,8 @@ importers:
   apps/web:
     dependencies:
       '@kookapp/kook-minigame-sdk':
-        specifier: 0.1.2
-        version: 0.1.2
+        specifier: 1.1.0
+        version: 1.1.0
       '@lights/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -722,8 +722,8 @@ packages:
   '@kookapp/kook-bridge-channel@1.0.15':
     resolution: {integrity: sha512-7CdD5CQTRVN8muTVxvvwVqjHKzhDaR4BmmBqUvsNtu4ftQPXU+mXYfNQdANSMJu2mgK5FiNR+/hW3Sk5T2lPbg==}
 
-  '@kookapp/kook-minigame-sdk@0.1.2':
-    resolution: {integrity: sha512-1fdepjhGyHtluaRF3nxcbkVJukPQ3EzTXo95dkblkYWiaTtoUhZ4rRD7uvfZ7DpgV+SDk9Lzut70SWx5FqqBjQ==}
+  '@kookapp/kook-minigame-sdk@1.1.0':
+    resolution: {integrity: sha512-naId8wfZWsTJ8omt7mm+RhRz4WSUiwqe9TSXu8JxletAFFATudiNoH4WX2i0fjzslKZq2iJE0+B5yqT5cLe50g==}
 
   '@lukeed/ms@2.0.2':
     resolution: {integrity: sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA==}
@@ -2306,7 +2306,7 @@ snapshots:
       '@kookapp/k-jsbridge': 1.0.1
       events: 3.3.0
 
-  '@kookapp/kook-minigame-sdk@0.1.2': {}
+  '@kookapp/kook-minigame-sdk@1.1.0': {}
 
   '@lukeed/ms@2.0.2': {}
 

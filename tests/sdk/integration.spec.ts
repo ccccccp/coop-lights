@@ -285,7 +285,7 @@ test('KOOK core lifecycle requests missed bootstrap, loads without OAuth and sto
   expect((await fixture()).probes).toBe(stopped)
 })
 
-test('game rejects bootstrap from itself, mismatched host origin and malformed binding', async ({ page }) => {
+test('SDK 忽略游戏自身发送的启动消息，随后正常接收宿主启动', async ({ page }) => {
   await page.goto('https://localhost:5190/?defer-bootstrap')
   await expect
     .poll(() =>
@@ -304,20 +304,6 @@ test('game rejects bootstrap from itself, mismatched host origin and malformed b
       location.origin
     )
   )
-  await page.evaluate(() => {
-    const target = document.querySelector<HTMLIFrameElement>('#game')!.contentWindow!
-    target.postMessage(
-      {
-        type: 'KOOK_MINI_GAME_BOOTSTRAP',
-        bootstrap: { hostOrigin: 'https://untrusted.example', sessionId: 'forged', generation: 1 },
-      },
-      'https://127.0.0.1:5190'
-    )
-    target.postMessage(
-      { type: 'KOOK_MINI_GAME_BOOTSTRAP', bootstrap: { hostOrigin: location.origin, sessionId: '', generation: -1 } },
-      'https://127.0.0.1:5190'
-    )
-  })
   await page.waitForTimeout(100)
   expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.calls)).not.toContain('ready')
   await page.evaluate(() =>
@@ -326,6 +312,34 @@ test('game rejects bootstrap from itself, mismatched host origin and malformed b
   await expect(game(page).getByTestId('current-user-name')).toHaveText('模拟玩家阿青')
   await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
 })
+
+for (const invalid of ['origin', 'binding'] as const) {
+  test(`SDK 拒绝可信宿主的错误启动参数（${invalid}），重新打开后可正常登录`, async ({ page }) => {
+    await page.goto('https://localhost:5190/?defer-bootstrap')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as unknown as { sdkFixture: { bootstrapRequests(): number } }).sdkFixture.bootstrapRequests()
+        )
+      )
+      .toBeGreaterThan(0)
+    await page.evaluate((invalid) => {
+      const bootstrap =
+        invalid === 'origin'
+          ? { hostOrigin: 'https://untrusted.example', sessionId: 'forged', generation: 1 }
+          : { hostOrigin: location.origin, sessionId: '', generation: -1 }
+      document
+        .querySelector<HTMLIFrameElement>('#game')!
+        .contentWindow!.postMessage({ type: 'KOOK_MINI_GAME_BOOTSTRAP', bootstrap }, 'https://127.0.0.1:5190')
+    }, invalid)
+    await expect(game(page).getByRole('status')).toContainText('INVALID_RESPONSE')
+    await expect(game(page).getByTestId('kook-login')).toBeDisabled()
+    expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.calls)).not.toContain('ready')
+    expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(0)
+    await open(page)
+    await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
+  })
+}
 
 test('Cookie 全部不可用时仍可完成原授权协议、协作通关、撤销和退出登录', async ({ browser }) => {
   const context = await browser.newContext({ ignoreHTTPSErrors: true })

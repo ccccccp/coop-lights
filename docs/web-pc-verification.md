@@ -15,7 +15,7 @@ pnpm dev
 
 启动前确认 5178、5188 没有被 SDK 仓库里的另一份游戏示例占用。不要同时在相同端口启动两个项目，也不要停止其它 KOOK 或 PM2 服务。
 
-真实宿主 `view.profile.start_url` 必须指向这次验证的游戏地址，`view.client_id` 与游戏后端的 `KOOK_CLIENT_ID` 保持一致；OAuth 授权回调必须与 `KOOK_REDIRECT_URI` 完全一致。`VITE_KOOK_HOST_ORIGINS` 只包含实际 KOOK 宿主的 HTTPS origin，`ALLOWED_GAME_ORIGINS` 包含实际游戏页面 origin。修改前端环境配置后重新启动 Vite或重新构建。
+真实宿主 `view.profile.start_url` 必须指向这次验证的游戏地址，`view.client_id` 与游戏后端的 `KOOK_CLIENT_ID` 保持一致；OAuth 授权回调必须与 `KOOK_REDIRECT_URI` 完全一致。SDK 默认信任正式宿主 `https://www.kookapp.cn`；测试环境通过 `VITE_KOOK_HOST_ORIGINS` 覆盖，只包含实际 KOOK 宿主的精确 HTTPS origin。`ALLOWED_GAME_ORIGINS` 包含实际游戏页面 origin。修改前端环境配置后重新启动 Vite 或重新构建。
 
 若平台配置仍指向远程游戏站点，请验证该站点已经部署此版本；运行本地代码不会改变远程页面。密钥及数据库凭证保存在忽略提交的本机配置，不从宿主或浏览器取得。
 
