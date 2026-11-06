@@ -48,6 +48,10 @@ Cookie 受限时，游戏沿用现有登录协议，以随机 nonce 绑定登录
 
 ## SDK 自测
 
+游戏顶部的「网络拦截测试」可在当前游戏内打开测试面板，支持图片、经典／Module JS、GET／HEAD／POST 接口及 WebSocket。也可访问 `/network-test` 独立页面；KOOK 模式下会自行完成 SDK ready 与加载上报，无需登录。
+
+结果记录耗时、HTTP 状态和重定向后的地址。收到 HTTP 4xx／5xx 仍表示取得响应；失败可能来自域名规则、CORS、证书或网络，结合 PC 开发者工具的 `ERR_BLOCKED_BY_CLIENT` 判断是否被客户端拦截。接口测试不带游戏凭据，JS 在隔离 iframe 中执行；超时、取消和退出页面会清理临时资源，记录仅保存在页面内存。
+
 ```powershell
 $env:VITE_KOOK_HOST_ORIGINS = 'https://localhost:5190'
 pnpm dev:sdk

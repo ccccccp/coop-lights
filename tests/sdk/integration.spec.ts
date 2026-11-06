@@ -343,6 +343,33 @@ for (const invalid of ['origin', 'binding'] as const) {
   })
 }
 
+test('网络测试面板沿用当前 SDK，独立测试页完成 ready 和加载上报且不自动授权', async ({ page }) => {
+  await page.clock.install()
+  await page.goto('https://localhost:5190/?core')
+  await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(1)
+  await game(page).getByRole('button', { name: '网络拦截测试', exact: true }).click()
+  const panel = game(page).getByRole('dialog', { name: '网络拦截测试', exact: true })
+  await panel.getByLabel('图片地址', { exact: true }).fill('https://resources.example/image.png')
+  await page.clock.runFor(15000)
+  await expect(panel).toBeVisible()
+  await expect(panel.getByLabel('图片地址', { exact: true })).toHaveValue('https://resources.example/image.png')
+  expect(
+    await page.evaluate(() => (window as FixtureWindow).sdkFixture.calls.filter((method) => method === 'ready').length)
+  ).toBe(1)
+  await panel.getByRole('button', { name: '返回游戏', exact: true }).click()
+  await page.evaluate(() => {
+    document.querySelector<HTMLIFrameElement>('#game')!.src = 'https://127.0.0.1:5190/network-test'
+  })
+  await expect(game(page).getByRole('heading', { name: '网络拦截测试', exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => (window as FixtureWindow).sdkFixture.loaded())).toBe(2)
+  expect(
+    await page.evaluate(
+      () => (window as FixtureWindow).sdkFixture.calls.filter((method) => method === 'session.get').length
+    )
+  ).toBe(0)
+  await expect(game(page).getByText('KOOK · ready', { exact: true })).toBeVisible()
+})
+
 test('Cookie 全部不可用时仍可完成原授权协议、协作通关、撤销和退出登录', async ({ browser }) => {
   const context = await browser.newContext({ ignoreHTTPSErrors: true })
   const upstream = await request.newContext({ ignoreHTTPSErrors: true })

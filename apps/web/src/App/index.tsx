@@ -8,6 +8,7 @@ import { RoomLobby } from './components/RoomLobby'
 import { UserAvatar } from './components/UserAvatar'
 
 import { LogPage } from '../LogPage'
+import { NetworkTestPage } from '../NetworkTestPage'
 import { ApiError, api } from '../api'
 import { createPlatformAdapter } from '../platform'
 import { useConnection } from '../useConnection'
@@ -26,6 +27,7 @@ function prettyTime(ms: number) {
 }
 export function App() {
   const [showLogs, setShowLogs] = useState(false)
+  const [showNetworkTests, setShowNetworkTests] = useState(false)
   const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const [booted, setBooted] = useState(false),
@@ -321,6 +323,7 @@ export function App() {
           <LogPage onClose={() => setShowLogs(false)} />
         </div>
       )}
+      {showNetworkTests && <NetworkTestPage onClose={() => setShowNetworkTests(false)} />}
       <header className="topbar">
         <a className="brand" href="/" onClick={(e) => e.preventDefault()}>
           <span className="brand-mark" aria-hidden="true">
@@ -341,6 +344,9 @@ export function App() {
           )}
           <button className="text-button" onClick={() => setShowLogs(true)}>
             调用日志
+          </button>
+          <button className="text-button" onClick={() => setShowNetworkTests(true)}>
+            网络拦截测试
           </button>
           <span className="mode-pill">{health?.platform.mode === 'kook' ? 'KOOK 模式' : '独立联机'}</span>
           {user && (
