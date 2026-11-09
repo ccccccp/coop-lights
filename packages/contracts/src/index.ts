@@ -142,6 +142,8 @@ export interface PlatformAdapter {
   ): Promise<{ status: 'logged_in'; session: SessionResponse } | { status: 'cancelled' }>
   logout(): Promise<void>
   leave?(): Promise<void>
+  requestFullscreen?(): Promise<void>
+  openExternalLink?(url: string): Promise<void>
   resolveInvite?(): Promise<void>
   refreshContext?(): Promise<void>
   invite(roomId: string): Promise<{

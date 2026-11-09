@@ -3,7 +3,13 @@ import { type Page, expect, request, test } from '@playwright/test'
 import { solve } from '../../apps/server/src/board'
 
 type FixtureWindow = Window & {
-  sdkFixture: { loaded(): number; calls: string[]; leaveInputs: Record<string, unknown>[] }
+  sdkFixture: {
+    loaded(): number
+    calls: string[]
+    leaveInputs: Record<string, unknown>[]
+    fullscreenInputs: Record<string, unknown>[]
+    externalLinkInputs: Record<string, unknown>[]
+  }
 }
 
 test.beforeEach(async ({ request }) => {
@@ -731,4 +737,116 @@ test('旧宿主未声明 leave 能力时禁用离开游戏按钮', async ({ page
   await expect(leave).toBeDisabled()
   await expect(leave).toHaveAttribute('title', '当前 KOOK 暂不支持离开游戏')
   expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.leaveInputs)).toEqual([])
+})
+
+test('右上角全屏免OAuth且重复点击只提交一次，窄屏入口保持可见', async ({ page }, testInfo) => {
+  await page.goto('https://localhost:5190/?core')
+  const button = game(page).getByRole('button', { name: '全屏', exact: true })
+  await expect(button).toBeEnabled()
+  await game(page)
+    .locator('.topbar')
+    .screenshot({ path: testInfo.outputPath('fullscreen-desktop.png') })
+  await page.setViewportSize({ width: 430, height: 900 })
+  await expect(button).toBeInViewport()
+  await game(page)
+    .locator('.topbar')
+    .screenshot({ path: testInfo.outputPath('fullscreen-narrow.png') })
+  await button.click()
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe('game')
+  await button.evaluate((button) => {
+    const element = button as HTMLButtonElement
+    element.click()
+    element.click()
+  })
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.fullscreenInputs)).toEqual([{}, {}])
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.calls)).not.toContain('session.get')
+  await page.evaluate(() => document.exitFullscreen())
+  await expect(button).toBeEnabled()
+})
+
+test('全屏失败后可以重试，旧宿主缺少能力时禁用入口', async ({ page }) => {
+  await page.goto('https://localhost:5190/?core&fail-fullscreen-once')
+  const button = game(page).getByRole('button', { name: '全屏', exact: true })
+  await button.click()
+  await expect(game(page).getByRole('status')).toContainText('USER_GESTURE_REQUIRED')
+  await expect(button).toBeEnabled()
+  expect(await page.evaluate(() => !!document.fullscreenElement)).toBe(false)
+  await button.click()
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe('game')
+  await page.evaluate(() => document.exitFullscreen())
+  await page.goto('https://localhost:5190/?core&no-fullscreen')
+  await expect(button).toBeDisabled()
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.fullscreenInputs)).toEqual([])
+})
+
+test('接口测试页可输入外链URL，沿用当前SDK、不导航游戏，失败和非法地址可重试', async ({ page }, testInfo) => {
+  await page.goto('https://localhost:5190/?core&fail-external-once')
+  await expect(game(page).getByTestId('kook-login')).toBeDisabled()
+  await game(page).getByRole('button', { name: '网络拦截测试', exact: true }).click()
+  const panel = game(page).getByRole('dialog', { name: '网络拦截测试', exact: true })
+  const form = panel.getByRole('form', { name: '外链跳转测试' })
+  const input = form.getByLabel('外链地址')
+  const openLink = form.getByRole('button', { name: '打开外链', exact: true })
+  await expect(openLink).toBeDisabled()
+  await input.fill('javascript:alert(1)')
+  await openLink.click()
+  await expect(form.getByRole('alert')).toContainText('INVALID_ARGUMENT')
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.externalLinkInputs)).toEqual([])
+  const url = 'https://game.example/help?room=one&source=kook#faq'
+  await input.fill(url)
+  await openLink.click()
+  await expect(form.getByRole('alert')).toContainText('PERMISSION_DENIED')
+  await expect(openLink).toBeEnabled()
+  await page.waitForTimeout(1100)
+  await openLink.click()
+  await expect(form.getByRole('status')).toContainText('已请求 KOOK 打开外链')
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.externalLinkInputs)).toEqual([{ url }, { url }])
+  expect(
+    await page.evaluate(() => (window as FixtureWindow).sdkFixture.calls.filter((method) => method === 'ready'))
+  ).toHaveLength(1)
+  const frame = page.frames().find((value) => value.name() === 'game')!
+  expect(frame.url()).not.toContain('game.example')
+  await form.screenshot({ path: testInfo.outputPath('external-link-desktop.png') })
+  await page.setViewportSize({ width: 430, height: 900 })
+  await input.fill('https://game.example/help?screen=narrow#faq')
+  await expect(input).toBeInViewport()
+  await page.waitForTimeout(1100)
+  await openLink.click()
+  await expect(form.getByRole('status')).toContainText('已请求 KOOK 打开外链')
+  expect(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await form.evaluate((element) => element.scrollIntoView({ block: 'center' }))
+  await panel.screenshot({ path: testInfo.outputPath('external-link-narrow.png') })
+})
+
+test('独立测试页复用自身SDK的外链接口，旧宿主禁用外链且不直连打开', async ({ page }) => {
+  await page.goto('https://localhost:5190/?core')
+  await page.evaluate(() => {
+    document.querySelector<HTMLIFrameElement>('#game')!.src = 'https://127.0.0.1:5190/network-test'
+  })
+  const form = game(page).getByRole('form', { name: '外链跳转测试' })
+  const url = 'https://game.example/support'
+  await form.getByLabel('外链地址').fill(url)
+  await expect(form.getByRole('button', { name: '打开外链', exact: true })).toBeEnabled()
+  await form.getByRole('button', { name: '打开外链', exact: true }).click()
+  await expect(form.getByRole('status')).toContainText('已请求 KOOK 打开外链')
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.externalLinkInputs)).toEqual([{ url }])
+  await page.goto('https://localhost:5190/?core&no-external-link')
+  await game(page).getByRole('button', { name: '网络拦截测试', exact: true }).click()
+  const oldForm = game(page).getByRole('form', { name: '外链跳转测试' })
+  await oldForm.getByLabel('外链地址').fill(url)
+  await expect(oldForm.getByRole('button', { name: '打开外链', exact: true })).toBeDisabled()
+  await expect(oldForm).toContainText('当前 KOOK 宿主尚未开放外链能力')
+})
+
+test('平台测试面板也能输入URL并通过同一SDK打开外链', async ({ page }, testInfo) => {
+  await open(page)
+  await game(page).locator('.test-panel summary').click()
+  const form = game(page).getByRole('form', { name: '外链跳转测试' })
+  await page.setViewportSize({ width: 430, height: 900 })
+  const url = 'https://game.example/community?from=platform-panel'
+  await form.getByLabel('外链地址').fill(url)
+  await form.getByRole('button', { name: '打开外链', exact: true }).click()
+  await expect(form.getByRole('status')).toContainText('已请求 KOOK 打开外链')
+  expect(await page.evaluate(() => (window as FixtureWindow).sdkFixture.externalLinkInputs)).toEqual([{ url }])
+  await form.screenshot({ path: testInfo.outputPath('platform-external-link-narrow.png') })
 })

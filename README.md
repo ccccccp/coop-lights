@@ -2,11 +2,11 @@
 
 React + TypeScript + Node.js 的 1～4 人协作点灯游戏，使用 PostgreSQL 保存玩家、登录会话和通关记录。
 
-本独立项目同步维护旁边 `../kook-minigame-sdk/examples/coop-lights` 的游戏实现，SDK 运行库使用 npmjs 已发布包。
+本项目独立维护点灯游戏，SDK 开发与模拟宿主工具位于相邻 `../kook-minigame-sdk` 工程。
 
-SDK 固定使用 npmjs 已发布的 `1.2.0`，支持 `lifecycle.leave()`。采用 `createKookClient` 具名导入，启动消息接收、来源校验和重投均由 SDK 完成。KOOK 模式右上角提供“离开游戏”，先退出点灯房间，再请求宿主关闭当前游戏；未登录也可使用，旧宿主未声明能力时禁用。
+SDK 固定使用 npmjs 已发布的 `1.3.0`，支持离开、请求全屏和打开外链。采用 `createKookClient` 具名导入，启动消息接收、来源校验和重投均由 SDK 完成。KOOK 模式右上角提供“离开游戏”，先退出点灯房间，再请求宿主关闭当前游戏；未登录也可使用，旧宿主未声明能力时禁用。
 
-已接入 KOOK 小游戏 SDK，支持登录授权、邀请、平台数据调试、连接恢复与授权撤销。当前可用本地模拟宿主完成自测；真实 KOOK 环境需要补齐应用配置并联调。配置和接入边界见 [SDK 接入说明](docs/sdk-integration.md)。
+已接入 KOOK 小游戏 SDK，支持登录授权、邀请、请求宿主全屏、外链跳转测试、平台数据调试、连接恢复与授权撤销。当前可用本地模拟宿主完成自测；真实 KOOK 环境需要补齐应用配置并联调。配置和接入边界见 [SDK 接入说明](docs/sdk-integration.md)。
 
 ## KOOK 账号与头像
 
@@ -20,7 +20,7 @@ KOOK 模式下，SDK 连接就绪且具备基本资料权限后，页面自动�
 
 需要 Node.js 22.18+、pnpm 10.26.0、本机 PostgreSQL 17（也可选用 Docker Desktop）、本机 Chrome。模拟宿主生成 HTTPS 证书还需要 OpenSSL，Windows 默认使用 Git for Windows 自带的版本，也可设置 `OPENSSL_BIN`。
 
-游戏保留独立 pnpm workspace 和锁文件，SDK 运行库从 npmjs 安装。浏览器目标和模拟宿主开发工具仍复用旁边 `../kook-minigame-sdk/scripts` 中的脚本。首次安装时，在本项目根目录执行：
+游戏保留独立 pnpm workspace 和锁文件，SDK 运行库从 npmjs 安装并固定为 `1.3.0`。浏览器目标和模拟宿主开发工具仍复用旁边 `../kook-minigame-sdk/scripts` 中的脚本。首次安装时，在本项目根目录执行：
 
 ```powershell
 pnpm install --frozen-lockfile

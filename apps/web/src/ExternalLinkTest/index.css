@@ -1,0 +1,39 @@
+.sdk-external-link-test {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  margin: 24px 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #15221c;
+  h2 {
+    margin: 0;
+    font-size: 18px;
+  }
+  p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin: 0;
+  }
+  input {
+    width: 100%;
+    min-width: 0;
+  }
+  .sdk-external-link-error {
+    color: #efbc75;
+  }
+  .sdk-external-link-success {
+    color: var(--lime);
+  }
+}

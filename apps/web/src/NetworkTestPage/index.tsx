@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
-import type { PlatformAdapter } from '@lights/contracts'
+import type { PlatformAdapter, PlatformContext } from '@lights/contracts'
 
 import { type ProbeKind, type ProbeResult, runProbe } from './probes'
 
+import { ExternalLinkTest } from '../ExternalLinkTest'
 import { api } from '../api'
 import { createPlatformAdapter } from '../platform'
 
@@ -52,8 +53,16 @@ interface RecordEntry {
   result: ProbeResult
 }
 
-export function NetworkTestPage({ onClose }: { onClose?: () => void }) {
+interface Props {
+  onClose?: () => void
+  adapter?: PlatformAdapter | null
+  platform?: PlatformContext | null
+}
+
+export function NetworkTestPage({ onClose, adapter: suppliedAdapter, platform: suppliedPlatform }: Props) {
   const embedded = Boolean(onClose)
+  const ownAdapter = useRef<PlatformAdapter | null>(null)
+  const [ownPlatform, setOwnPlatform] = useState<PlatformContext | null>(null)
   const dialog = useRef<HTMLDialogElement>(null)
   const controllers = useRef(new Map<ProbeKind, AbortController>())
   const serial = useRef(0)
@@ -93,9 +102,12 @@ export function NetworkTestPage({ onClose }: { onClose?: () => void }) {
       const health = await api.health()
       if (!alive) return
       adapter = createPlatformAdapter(health.platform.mode)
+      ownAdapter.current = adapter
       unsubscribe = adapter.subscribe((event) => {
-        if (alive && event.type === 'context')
+        if (alive && event.type === 'context') {
           setConnection(event.platform.mode === 'kook' ? `KOOK · ${event.platform.status}` : '独立模式 / 浏览器')
+          setOwnPlatform(event.platform)
+        }
       })
       await adapter.initialize()
       if (alive) await adapter.reportLoaded()
@@ -106,6 +118,7 @@ export function NetworkTestPage({ onClose }: { onClose?: () => void }) {
       alive = false
       unsubscribe?.()
       adapter?.dispose()
+      if (ownAdapter.current === adapter) ownAdapter.current = null
     }
   }, [embedded])
 
@@ -262,6 +275,10 @@ export function NetworkTestPage({ onClose }: { onClose?: () => void }) {
           </form>
         ))}
       </div>
+      <ExternalLinkTest
+        adapter={embedded ? suppliedAdapter : ownAdapter.current}
+        platform={embedded ? suppliedPlatform : ownPlatform}
+      />
       <section className="network-test-results" aria-label="测试结果">
         <div className="network-test-results-title">
           <h2>测试结果</h2>

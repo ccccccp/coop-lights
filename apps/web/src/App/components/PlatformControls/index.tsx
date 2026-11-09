@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 
 import type { PlatformAdapter, PlatformContext, PlatformInspection, PlatformResource } from '@lights/contracts'
 
+import { ExternalLinkTest } from '../../../ExternalLinkTest'
+
 import './index.css'
 
 interface Props {
@@ -71,6 +73,7 @@ export function PlatformControls({ adapter, platform, busy, run }: Props) {
           打开官方服务器
         </button>
       </div>
+      <ExternalLinkTest adapter={adapter} platform={platform} disabled={busy} />
       {platform.message && <p className="platform-message">{platform.message}</p>}
       {result && (
         <>

@@ -19,6 +19,8 @@ const supported = [
   'ui.openInviteModal',
   'officialServer.getStatus',
   'ui.openOfficialServerModal',
+  'ui.requestFullscreen',
+  'ui.openExternalLink',
   'lifecycle.reportLoadResult',
   'lifecycle.leave',
   'auth.onStateChanged',
@@ -38,6 +40,8 @@ let probes = 0
 const calls: string[] = []
 const inviteInputs: Record<string, unknown>[] = []
 const leaveInputs: Record<string, unknown>[] = []
+const fullscreenInputs: Record<string, unknown>[] = []
+const externalLinkInputs: Record<string, unknown>[] = []
 const authObservers = new Set<(value: unknown) => void>()
 const lifecycleObservers = new Set<(value: unknown) => void>()
 const participantObservers = new Set<(value: unknown) => void>()
@@ -70,7 +74,12 @@ function register() {
         gameCode: 'lights-sdk-fixture',
         instanceId,
         platform: 'web',
-        capabilities: params.has('no-leave') ? supported.filter((value) => value !== 'lifecycle.leave') : supported,
+        capabilities: supported.filter(
+          (value) =>
+            !(params.has('no-leave') && value === 'lifecycle.leave') &&
+            !(params.has('no-fullscreen') && value === 'ui.requestFullscreen') &&
+            !(params.has('no-external-link') && value === 'ui.openExternalLink')
+        ),
         permissionVersion: 'fixture-v1',
         availableScopes: params.has('core') ? [] : params.has('basic-only') ? ['get_user_info'] : scopes,
         context: {
@@ -157,6 +166,21 @@ function register() {
     'officialServer.getStatus': () =>
       success({ configured: true, name: '模拟官方服务器', iconUrl: null, membership: 'not_joined' }),
     'ui.openOfficialServerModal': () => success({ status: 'cancelled' }),
+    'ui.requestFullscreen': async (input) => {
+      fullscreenInputs.push(input)
+      if (params.has('fail-fullscreen-once') && fullscreenInputs.length === 1)
+        return { ok: false, error: { code: 'USER_GESTURE_REQUIRED' } }
+      // 模拟宿主承载进入全屏；游戏只能经真实 SDK 请求。
+      if (!document.fullscreenElement) await frame.requestFullscreen()
+      return success({})
+    },
+    'ui.openExternalLink': (input) => {
+      externalLinkInputs.push(input)
+      if (params.has('fail-external-once') && externalLinkInputs.length === 1)
+        return { ok: false, error: { code: 'PERMISSION_DENIED' } }
+      document.querySelector('#host-status')!.textContent = `模拟外链已提交：${String(input.url)}`
+      return success({})
+    },
     'lifecycle.reportLoadResult': () => {
       loaded++
       return success({})
@@ -261,6 +285,8 @@ Object.assign(window, {
     calls,
     inviteInputs,
     leaveInputs,
+    fullscreenInputs,
+    externalLinkInputs,
     loaded: () => loaded,
     bootstrapRequests: () => bootstrapRequests,
     probes: () => probes,

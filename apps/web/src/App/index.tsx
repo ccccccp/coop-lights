@@ -30,6 +30,7 @@ export function App() {
   const [showNetworkTests, setShowNetworkTests] = useState(false)
   const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [leaving, setLeaving] = useState(false)
+  const [requestingFullscreen, setRequestingFullscreen] = useState(false)
   const [booted, setBooted] = useState(false),
     [user, setUser] = useState<GameUser | null>(null)
   const [room, setRoom] = useState<RoomSnapshot | null>(null),
@@ -323,7 +324,9 @@ export function App() {
           <LogPage onClose={() => setShowLogs(false)} />
         </div>
       )}
-      {showNetworkTests && <NetworkTestPage onClose={() => setShowNetworkTests(false)} />}
+      {showNetworkTests && (
+        <NetworkTestPage adapter={adapter.current} platform={platform} onClose={() => setShowNetworkTests(false)} />
+      )}
       <header className="topbar">
         <a className="brand" href="/" onClick={(e) => e.preventDefault()}>
           <span className="brand-mark" aria-hidden="true">
@@ -369,6 +372,32 @@ export function App() {
                 退出登录
               </button>
             </>
+          )}
+          {kook && (
+            <button
+              type="button"
+              className="secondary small"
+              disabled={busy || platform?.status !== 'ready' || !platform.capabilities.includes('ui.requestFullscreen')}
+              aria-busy={requestingFullscreen}
+              title={
+                !platform?.capabilities.includes('ui.requestFullscreen') ? '当前 KOOK 暂不支持请求全屏' : undefined
+              }
+              onClick={() =>
+                void action(async () => {
+                  const current = adapter.current
+                  if (!current?.requestFullscreen) throw new Error('当前 KOOK 暂不支持请求全屏')
+                  setRequestingFullscreen(true)
+                  try {
+                    // 直接在点击链路调用 SDK，保留浏览器要求的瞬时用户激活。
+                    await current.requestFullscreen()
+                  } finally {
+                    setRequestingFullscreen(false)
+                  }
+                })
+              }
+            >
+              {requestingFullscreen ? '正在全屏…' : '全屏'}
+            </button>
           )}
           {kook && (
             <button

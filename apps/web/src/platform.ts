@@ -312,6 +312,18 @@ export function kookAdapter(): PlatformAdapter {
       patch({ invitedRoomId: null, context: null })
       await clearGameSession()
     },
+    async requestFullscreen() {
+      const sdk = currentClient()
+      if (context.status !== 'ready') throw new Error('请等待 KOOK 连接就绪')
+      if (!sdk.hasCapability('ui.requestFullscreen')) throw new Error('当前 KOOK 暂不支持请求全屏')
+      await sdk.ui.requestFullscreen()
+    },
+    async openExternalLink(url) {
+      const sdk = currentClient()
+      if (context.status !== 'ready') throw new Error('请等待 KOOK 连接就绪')
+      if (!sdk.hasCapability('ui.openExternalLink')) throw new Error('当前 KOOK 暂不支持打开外链')
+      await sdk.ui.openExternalLink({ url })
+    },
     async leave() {
       const sdk = currentClient()
       if (context.status !== 'ready') throw new Error('请等待 KOOK 连接就绪')
